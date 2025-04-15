@@ -1,0 +1,7 @@
+**.pyc
+**__pycache__
+deleteme
+_build
+build
+**.ipynb_checkpoints
+src/pted/_version.py

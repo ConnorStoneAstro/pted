@@ -44,7 +44,9 @@ def pted_coverage_test(g, s, permutations=100, metric="euclidean", return_all=Fa
     test_stats = []
     permute_stats = []
     for i in range(nsim):
-        test, permute = pted(g[i].reshape(1, *D), s[:, i], permutations=permutations, metric=metric)
+        test, permute = pted(
+            g[i].reshape(1, *D), s[:, i], permutations=permutations, metric=metric, return_all=True
+        )
         test_stats.append(test)
         permute_stats.append(permute)
     test_stats = np.array(test_stats)
@@ -52,7 +54,7 @@ def pted_coverage_test(g, s, permutations=100, metric="euclidean", return_all=Fa
     if return_all:
         return test_stats, permute_stats
     # Compute p-values
-    pvals = np.mean(permute > test_stats[:, None], axis=1)
+    pvals = np.mean(permute_stats > test_stats[:, None], axis=1)
     pvals[pvals == 0] = 1.0 / permutations  # handle pvals == 0
     chi2 = -2 * np.log(pvals)
     return 1 - chi2_dist.cdf(np.sum(chi2), 2 * nsim)
