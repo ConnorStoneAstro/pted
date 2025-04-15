@@ -1,9 +1,9 @@
 import numpy as np
-from scipy.stats import chi2 as chi2_dist
 from .pted import pted, pted_coverage_test
 
 
 def test():
+    np.random.seed(42)
     # example 2 sample test
     D = 300
     for _ in range(20):
@@ -40,9 +40,7 @@ def test():
     s_corr = np.stack(s_corr, axis=1)
     s_over = np.stack(s_over, axis=1)
     s_under = np.stack(s_under, axis=1)
-    import matplotlib.pyplot as plt
 
-    fig, axarr = plt.subplots(2, 3, figsize=(15, 5))
     # correct
     p = pted_coverage_test(g, s_corr, permutations=200)
     assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
