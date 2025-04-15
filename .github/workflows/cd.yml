@@ -74,7 +74,7 @@ jobs:
           echo "=== Testing wheel file ==="
           # Install wheel to get dependencies and check import
           python -m pip install --extra-index-url https://test.pypi.org/simple --upgrade --pre pted
-          python -c "import pted; print(pted.__version__); pqm.test()"
+          python -c "import pted; print(pted.__version__); pted.test()"
           echo "=== Done testing wheel file ==="
 
           echo "=== Testing source tar file ==="

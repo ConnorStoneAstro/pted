@@ -49,7 +49,7 @@ files = ["requirements.txt"]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/pqm/_version.py"
+version-file = "src/pted/_version.py"
 
 [tool.hatch.version.raw-options]
 local_scheme = "no-local-version"
