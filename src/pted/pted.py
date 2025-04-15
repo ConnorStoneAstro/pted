@@ -41,11 +41,12 @@ def pted_coverage_test(g, s, permutations=100, metric="euclidean", return_all=Fa
         metric: distance metric to use. str
     """
     _, nsim, *D = s.shape
+    g = g.reshape(1, nsim, *D)
     test_stats = []
     permute_stats = []
     for i in range(nsim):
         test, permute = pted(
-            g[i].reshape(1, *D), s[:, i], permutations=permutations, metric=metric, return_all=True
+            g[:, i], s[:, i], permutations=permutations, metric=metric, return_all=True
         )
         test_stats.append(test)
         permute_stats.append(permute)

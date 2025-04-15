@@ -1,10 +1,10 @@
 # PTED: Permutation Test using the Energy Distance
 
 ![PyPI - Version](https://img.shields.io/pypi/v/pted?style=flat-square)
-[![CI](https://github.com/Ciela-Institute/pted/actions/workflows/ci.yml/badge.svg)](https://github.com/Ciela-Institute/pted/actions/workflows/ci.yml)
+[![CI](https://github.com/ConnorStoneAstro/pted/actions/workflows/ci.yml/badge.svg)](https://github.com/ConnorStoneAstro/pted/actions/workflows/ci.yml)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/pted)
-[![codecov](https://codecov.io/gh/Ciela-Institute/pted/graph/badge.svg?token=wbkUiRkYtg)](https://codecov.io/gh/Ciela-Institute/pted)
+[![codecov](https://codecov.io/gh/ConnorStoneAstro/pted/graph/badge.svg?token=5LISJ5BN17)](https://codecov.io/gh/ConnorStoneAstro/pted)
 
 Think of it like a multi-dimensional KS-test! It is used for two sample testing and posterior coverage tests.
 
