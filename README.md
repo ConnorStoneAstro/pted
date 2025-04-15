@@ -51,3 +51,42 @@ print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
 PyTorch Tensors on the appropriate device.
+
+## Reference
+
+I didn't invent this test, I just think its neat. Here is a paper on the subject:
+
+```
+@article{szekely2004testing,
+  title={Testing for equal distributions in high dimension},
+  author={Sz{\'e}kely, G{\'a}bor J and Rizzo, Maria L and others},
+  journal={InterStat},
+  volume={5},
+  number={16.10},
+  pages={1249--1272},
+  year={2004},
+  publisher={Citeseer}
+}
+```
+
+Permutation tests are a whole class of tests, with much literature. Here are some starting points:
+
+```
+@book{good2013permutation,
+  title={Permutation tests: a practical guide to resampling methods for testing hypotheses},
+  author={Good, Phillip},
+  year={2013},
+  publisher={Springer Science \& Business Media}
+}
+```
+
+```
+@book{rizzo2019statistical,
+  title={Statistical computing with R},
+  author={Rizzo, Maria L},
+  year={2019},
+  publisher={Chapman and Hall/CRC}
+}
+```
+
+There is also [the wikipedia page](https://en.wikipedia.org/wiki/Permutation_test), and the more general [scipy implementation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.permutation_test.html), and other [python implementations](https://github.com/qbarthelemy/PyPermut)
