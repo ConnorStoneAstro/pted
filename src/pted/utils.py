@@ -28,7 +28,7 @@ def _pted_numpy(x, y, permutations=100, metric="euclidean", return_all=False):
     if return_all:
         return test_stat, permute_stats
     # Compute p-value
-    return np.mean(permute_stats > test_stat)
+    return np.mean(np.array(permute_stats) > test_stat)
 
 
 @torch.no_grad()
@@ -36,7 +36,7 @@ def _pted_torch(x, y, permutations=100, metric="euclidean", return_all=False):
     z = torch.cat((x, y), dim=0)
     if metric == "euclidean":
         metric = 2.0
-    dmatrix = torch.cdist(z, z, metric=metric)
+    dmatrix = torch.cdist(z, z, p=metric)
     nx = len(x)
     I = torch.arange(len(z))
 
@@ -48,4 +48,4 @@ def _pted_torch(x, y, permutations=100, metric="euclidean", return_all=False):
     if return_all:
         return test_stat, permute_stats
     # Compute p-value
-    return torch.mean(permute_stats > test_stat).item()
+    return np.mean(np.array(permute_stats) > test_stat)
