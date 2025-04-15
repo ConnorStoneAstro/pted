@@ -18,7 +18,7 @@ pip install pted
 
 ## Usage
 
-PTED (pronounced "ted") takes in $x$ and $y$ two datasets and determines if they
+PTED (pronounced "ted") takes in `x` and `y` two datasets and determines if they
 come from the same underlying distribution. 
 
 ## Example: Two-Sample-Test
