@@ -35,6 +35,9 @@ def pted(
     assert type(x) == type(y), f"x and y must be of the same type, not {type(x)} and {type(y)}"
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
     assert len(y.shape) >= 2, f"y must be at least 2D, not {y.shape}"
+    assert (
+        x.shape[1:] == y.shape[1:]
+    ), f"x and y samples must have the same shape (past first dim), not {x.shape} and {y.shape}"
     if len(x.shape) > 2:
         x = x.reshape(x.shape[0], -1)
     if len(y.shape) > 2:
@@ -70,6 +73,9 @@ def pted_coverage_test(
             default)
     """
     nsamp, nsim, *D = s.shape
+    assert (
+        g.shape == s.shape[1:]
+    ), f"g and s must have the same shape (past first dim of s), not {g.shape} and {s.shape}"
     if len(s.shape) > 3:
         s = s.reshape(nsamp, nsim, -1)
     g = g.reshape(1, nsim, -1)

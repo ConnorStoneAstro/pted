@@ -3,6 +3,21 @@ import torch
 import numpy as np
 
 
+def test_inputs_extra_dims():
+    np.random.seed(42)
+    # Test with numpy arrays
+    x = np.random.normal(size=(100, 30, 30))
+    y = np.random.normal(size=(100, 30, 30))
+    p = pted.pted(x, y)
+    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+
+    # Test with torch tensors
+    g = torch.randn(100, 30, 30)
+    s = torch.randn(50, 100, 30, 30)
+    p = pted.pted_coverage_test(g, s)
+    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+
+
 def test_pted_main():
     pted.test()
 
