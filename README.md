@@ -8,6 +8,8 @@
 
 Think of it like a multi-dimensional KS-test! It is used for two sample testing and posterior coverage tests.
 
+![pted logo](media/pted_logo.png)
+
 ## Install
 
 To install PTED, run the following:
@@ -19,7 +21,7 @@ pip install pted
 ## Usage
 
 PTED (pronounced "ted") takes in `x` and `y` two datasets and determines if they
-come from the same underlying distribution. 
+come from the same underlying distribution. For information about each argument, just use ``help(pted)``. 
 
 ## Example: Two-Sample-Test
 
