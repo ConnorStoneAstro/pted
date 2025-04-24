@@ -24,7 +24,7 @@ pip install pted
 
 PTED (pronounced "ted") takes in `x` and `y` two datasets and determines if they
 come from the same underlying distribution. For information about each argument,
-just use ``help(pted)``.
+just use ``help(pted.pted)`` or ``help(pted.pted_coverage_test)``.
 
 The returned value is a p-value, an estimate of the probability of a more
 extreme instance occurring. Under the null hypothesis, a p-value is drawn from a
@@ -42,7 +42,7 @@ import numpy as np
 p = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
 q = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
 
-p_value = pted(p, q, permutations = 1000)
+p_value = pted(p, q)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
 
@@ -55,7 +55,7 @@ import numpy as np
 g = np.random.normal(size = (100, 10)) # ground truth (n_simulations, n_dimensions)
 s = np.random.normal(size = (200, 100, 10)) # posterior samples (n_samples, n_simulations, n_dimensions)
 
-p_value = pted_coverage_test(g, s, permutations = 100)
+p_value = pted_coverage_test(g, s)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
 
