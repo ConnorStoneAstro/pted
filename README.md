@@ -6,7 +6,9 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/pted)
 [![codecov](https://codecov.io/gh/ConnorStoneAstro/pted/graph/badge.svg?token=5LISJ5BN17)](https://codecov.io/gh/ConnorStoneAstro/pted)
 
-Think of it like a multi-dimensional KS-test! It is used for two sample testing and posterior coverage tests.
+Think of it like a multi-dimensional KS-test! It is used for two sample testing
+and posterior coverage tests. In some cases it is even more sensitive than the
+KS-test, but likely not all cases.
 
 ![pted logo](media/pted_logo.png)
 
@@ -21,7 +23,15 @@ pip install pted
 ## Usage
 
 PTED (pronounced "ted") takes in `x` and `y` two datasets and determines if they
-come from the same underlying distribution. For information about each argument, just use ``help(pted)``. 
+come from the same underlying distribution. For information about each argument,
+just use ``help(pted)``.
+
+The returned value is a p-value, an estimate of the probability of a more
+extreme instance occurring. Under the null hypothesis, a p-value is drawn from a
+random uniform distribution (range 0 to 1). If the null hypothesis is false, one
+would expect to see very low p-values and so one can set a limit such as
+`p=0.01` below which we reject the null hypothesis. In this case `1/100`th of
+the time even when the null hypothesis is true, we will reject the null. 
 
 ## Example: Two-Sample-Test
 
@@ -91,4 +101,8 @@ Permutation tests are a whole class of tests, with much literature. Here are som
 }
 ```
 
-There is also [the wikipedia page](https://en.wikipedia.org/wiki/Permutation_test), and the more general [scipy implementation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.permutation_test.html), and other [python implementations](https://github.com/qbarthelemy/PyPermut)
+There is also [the wikipedia
+page](https://en.wikipedia.org/wiki/Permutation_test), and the more general
+[scipy
+implementation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.permutation_test.html),
+and other [python implementations](https://github.com/qbarthelemy/PyPermut)
