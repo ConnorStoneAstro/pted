@@ -56,3 +56,34 @@ def test_pted_coverage_full():
     test, permute = pted.pted_coverage_test(g, s, permutations=100, return_all=True)
     assert test.shape == (100,)
     assert permute.shape == (100, 100)
+
+
+def test_pted_chunk_torch():
+    np.random.seed(42)
+    torch.manual_seed(42)
+
+    # example 2 sample test
+    D = 10
+    x = torch.randn(1000, D)
+    y = torch.randn(1000, D)
+    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+
+    y = torch.rand(1000, D)
+    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+
+
+def test_pted_chunk_numpy():
+    np.random.seed(42)
+
+    # example 2 sample test
+    D = 10
+    x = np.random.normal(size=(1000, D))
+    y = np.random.normal(size=(1000, D))
+    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+
+    y = np.random.uniform(size=(1000, D))
+    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
