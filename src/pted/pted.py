@@ -49,7 +49,8 @@ def pted(
 
     Example
     -------
-        import numpy as np from pted import pted
+        import numpy as np
+        from pted import pted
 
         # Generate two samples from the same distribution
         x = np.random.normal(size=(100, 10))
