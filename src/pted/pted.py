@@ -18,7 +18,46 @@ def pted(
     chunk_iter: Optional[int] = None,
 ):
     """
-    Two sample test using a permutation test on the energy distance.
+    Two sample null hypothesis test using a permutation test on the energy
+    distance.
+
+    A "two sample test" is a statistical test that compares two samples to
+    determine if they come from the same distribution. The null hypothesis is
+    that the two samples come from the same distribution. A permutation test is
+    a non-parametric test that compares a test statistic (in this case, the
+    energy distance) to that same statistic computed on random re-shuffling
+    (permutations) of the data. Under the null hypothesis, x and y were drawn
+    from the same distribution so test statistic should be randomly distributed
+    among the permutation statistics. If the test statistic is significantly
+    larger than the permuted statistics, the p-value will be very small. Before
+    running pted, you should choose a threshold at which you will reject the
+    null. for example, if you choose a threshold of 0.01, you will reject the
+    null hypothesis if the p-value is less than 0.01. However, note that in this
+    case you will reject the null 1% of the time even if the null is true. This
+    is a trade-off between false positives and false negatives.
+
+    Here is a pseudo-code description of the algorithm:
+        test_stat = energy_distance(x, y)
+        permute_stats = []
+        for i in range(permutations):
+            z = concatenate(x, y)
+            z = shuffle(z)
+            x, y = z[:nx], z[nx:]
+            permute_stats.append(energy_distance(x, y))
+        p = mean(permute_stats > test_stat)
+        return p
+
+    Example
+    -------
+        import numpy as np from pted import pted
+
+        # Generate two samples from the same distribution
+        x = np.random.normal(size=(100, 10))
+        y = np.random.normal(size=(100, 10))
+
+        p = pted(x, y)
+
+        print(f"p-value: {p}") # expect p in U(0,1)
 
     Parameters
     ----------
@@ -52,7 +91,10 @@ def pted(
         accuracy. The larger the chunk size and larger chunk_iter, the more
         accurate the estimate, but the slower the computation. PTED remains an
         exact p-value test even when chunking, it simply becomes less sensitive
-        to the difference between x and y.
+        to the difference between x and y. The chunked pted test has time
+        complexity O(c^2 * I * D * P), where c is the chunk size, I is the
+        number of iterations, D is the number of dimensions, and P is the number
+        of permutations. For chunking to be worth it you should have c^2 * I << n^2.
     """
     assert type(x) == type(y), f"x and y must be of the same type, not {type(x)} and {type(y)}"
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
@@ -107,6 +149,47 @@ def pted_coverage_test(
     """
     Coverage test using a permutation test on the energy distance.
 
+    A "coverage test" is a statistical test that determines if the posterior
+    samples (s) cover the ground truth samples (g) with the correct uncertainty.
+    By "correct uncertainty" we mean that any region R which contains a% of the
+    posterior samples should contain the ground truth g with a% probability. A
+    posterior s which is "overconfident" will have very little variability in
+    it's samples, therefore the ground truth g will tend to be far off from the
+    samples in relative terms. This will lead to a low p-value. A posterior s
+    which is "underconfident" will have too much variability in it's samples,
+    therefore the ground truth g will be enclosed too well within the
+    distribution of samples. This will lead to a high p-value. The null
+    hypothesis is that the posterior samples cover the ground truth samples with
+    the correct uncertainty. If the null hypothesis is true, the p-value will be
+    distributed as U(0,1).
+
+    To perform this test, we compute the pted p-value for each simulation
+    independently. We then compute the p-value under the null hypothesis that
+    the pted p-values are distributed as U(0,1). This is done by computing the
+    chi-squared statistic of the p-values (which for U(0,1) means chi2 = -2 *
+    log(p)). The total p-value is then computed as 1 - chi2_cdf(sum(chi2), 2 *
+    n_sims). Note, that because p is computed with a finite number of
+    iterations, it is possible that p=0 in which case log(p) = -inf. To handle
+    this, we set p=1/n_permutations. This is essentially the smallest p-value
+    estimate reasonable for n_permutations.
+
+
+    Example Usage
+    ----------------
+        import numpy as np
+        from pted import pted_coverage_test
+
+        # Generate mock ground truth samples (n_simulations, n_dimensions)
+        g = np.random.normal(size=(100, 10))
+
+        # Generate mock posterior samples (n_samples, n_simulations, n_dimensions)
+        s = np.random.normal(size=(200, 100, 10))
+
+        p = pted_coverage_test(g, s)
+
+        print(f"p-value: {p}") # expect p in U(0,1)
+
+
     Parameters
     ----------
         g (Union[np.ndarray, Tensor]): Ground truth samples. Shape (n_sims, *D)
@@ -140,7 +223,10 @@ def pted_coverage_test(
         accuracy. The larger the chunk size and larger chunk_iter, the more
         accurate the estimate, but the slower the computation. PTED remains an
         exact p-value test even when chunking, it simply becomes less sensitive
-        to the difference between x and y.
+        to the difference between x and y. The chunked pted test has time
+        complexity O(c^2 * I * D * P), where c is the chunk size, I is the
+        number of iterations, D is the number of dimensions, and P is the number
+        of permutations. For chunking to be worth it you should have c^2 * I << n^2.
     """
     nsamp, nsim, *D = s.shape
     assert (

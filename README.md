@@ -39,10 +39,10 @@ the time even when the null hypothesis is true, we will reject the null.
 from pted import pted
 import numpy as np
 
-p = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
-q = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
+x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
+y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
 
-p_value = pted(p, q)
+p_value = pted(x, y)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
 
