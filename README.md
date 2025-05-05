@@ -59,6 +59,52 @@ p_value = pted_coverage_test(g, s)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
 
+## How it works
+
+PTED uses the energy distance of the two samples `x` and `y`, this is computed as:
+
+$$d = \frac{2}{n_xn_y}\sum_{i,j}||x_i - y_j|| - \frac{1}{n_x^2}\sum_{i,j}||x_i - x_j|| - \frac{1}{n_y^2}\sum_{i,j}||y_i - y_j||$$
+
+The energy distance measures distances between pairs of points. It becomes more
+positive if the `x` and `y` samples tend to be further from each other than from
+themselves. We demonstrate this in the figure below, where the `x` samples are
+drawn from a (thick) circle, while the `y` samples are drawn from a (thick)
+line.
+
+![pted demo test](media/test_PTED.png)
+
+In the left figure, we show the two distributions, which by eye are clearly not
+drawn from the same distribution (circle and line). In the center figure we show
+the individual distance measurements as histograms. To compute the energy
+distance, we would sum all the elements in these histograms rather than binning
+them. You can also see a schematic of the distance matrix, which represents
+every pair of samples and is colour coded the same as the histograms. In the
+right figure we show the energy distance as a vertical line, the grey
+distribution is explained below.
+
+The next element of PTED is the permutation test. For this we combine the `x`
+and `y` samples into a single collection `z`. We then randomly shuffle (permute)
+the `z` collection and break it back into `x` and `y`, now with samples randomly
+swapped between the two distributions (though they are the same size as before).
+If we compute the energy distance again, we will get very different results.
+This time we are sure that the null hypothesis is true, `x` and `y` have been
+drawn from the same distribution (`z`), and so the energy distance will be quite
+low. If we do this many times and track the permuted energy distances we get a
+distribution, this is the grey distribution in the right figure. Below we show
+an example of what this looks like.
+
+![pted demo permute](media/permute_PTED.png)
+
+Here we see the `x` and `y` samples have been scrambled in the left figure. In
+the center figure we see the components of the energy distance matrix are much
+more consistent because `x` and `y` now follow the same distribution (a mixture
+of the original circle and line distribution). In the right figure we now see
+that the vertical line is situated well within the grey distribution. Indeed the
+grey distribution is just a histogram of many re-runs of this procedure. We
+compute a p-value by taking the fraction of the energy distances that are
+greater than the current one.
+
+
 ## GPU Compatibility
 
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
