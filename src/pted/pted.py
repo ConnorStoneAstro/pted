@@ -16,7 +16,7 @@ def pted(
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
-) -> Union[float, Union[float, np.ndarray]]:
+) -> Union[float, tuple[float, np.ndarray]]:
     """
     Two sample null hypothesis test using a permutation test on the energy
     distance.
@@ -150,7 +150,7 @@ def pted_coverage_test(
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
-) -> Union[float, Union[np.ndarray, np.ndarray]]:
+) -> Union[float, tuple[np.ndarray, np.ndarray]]:
     """
     Coverage test using a permutation test on the energy distance.
 

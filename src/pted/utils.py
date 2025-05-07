@@ -7,30 +7,6 @@ import torch
 __all__ = ["_pted_numpy", "_pted_chunk_numpy", "_pted_torch", "_pted_chunk_torch"]
 
 
-def _energy_distance_numpy(x, y, metric="euclidean"):
-    nx = len(x)
-    ny = len(y)
-    z = np.concatenate((x, y), axis=0)
-    D = cdist(z, z, metric=metric)
-    Exx = D[:nx, :nx].sum() / nx**2
-    Eyy = D[nx:, nx:].sum() / ny**2
-    Exy = D[:nx, nx:].sum() / (nx * ny)
-    return 2 * Exy - Exx - Eyy
-
-
-def _energy_distance_torch(x, y, metric="euclidean"):
-    nx = len(x)
-    ny = len(y)
-    z = torch.cat((x, y), dim=0)
-    if metric == "euclidean":
-        metric = 2.0
-    D = torch.cdist(z, z, p=metric)
-    Exx = D[:nx, :nx].sum() / nx**2
-    Eyy = D[nx:, nx:].sum() / ny**2
-    Exy = D[:nx, nx:].sum() / (nx * ny)
-    return (2 * Exy - Exx - Eyy).item()
-
-
 def _energy_distance_precompute(
     D: Union[np.ndarray, torch.Tensor], nx: int, ny: int
 ) -> Union[float, torch.Tensor]:
@@ -38,6 +14,26 @@ def _energy_distance_precompute(
     Eyy = D[nx:, nx:].sum() / ny**2
     Exy = D[:nx, nx:].sum() / (nx * ny)
     return 2 * Exy - Exx - Eyy
+
+
+def _energy_distance_numpy(x: np.ndarray, y: np.ndarray, metric: str = "euclidean") -> float:
+    nx = len(x)
+    ny = len(y)
+    z = np.concatenate((x, y), axis=0)
+    D = cdist(z, z, metric=metric)
+    return _energy_distance_precompute(D, nx, ny)
+
+
+def _energy_distance_torch(
+    x: torch.Tensor, y: torch.Tensor, metric: Union[str, float] = "euclidean"
+) -> float:
+    nx = len(x)
+    ny = len(y)
+    z = torch.cat((x, y), dim=0)
+    if metric == "euclidean":
+        metric = 2.0
+    D = torch.cdist(z, z, p=metric)
+    return _energy_distance_precompute(D, nx, ny).item()
 
 
 def _energy_distance_estimate_numpy(
