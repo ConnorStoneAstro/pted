@@ -1,3 +1,5 @@
+from typing import Optional, Union
+
 import numpy as np
 from scipy.spatial.distance import cdist
 import torch
@@ -5,73 +7,132 @@ import torch
 __all__ = ["_pted_numpy", "_pted_chunk_numpy", "_pted_torch", "_pted_chunk_torch"]
 
 
-def _energy_distance_precompute(D, nx, ny):
+def _energy_distance_numpy(x, y, metric="euclidean"):
+    nx = len(x)
+    ny = len(y)
+    z = np.concatenate((x, y), axis=0)
+    D = cdist(z, z, metric=metric)
     Exx = D[:nx, :nx].sum() / nx**2
     Eyy = D[nx:, nx:].sum() / ny**2
     Exy = D[:nx, nx:].sum() / (nx * ny)
     return 2 * Exy - Exx - Eyy
 
 
-def _energy_distance_estimate(x, y, chunk_size, chunk_iter, metric="euclidean"):
-    is_torch = isinstance(x, torch.Tensor)
+def _energy_distance_torch(x, y, metric="euclidean"):
+    nx = len(x)
+    ny = len(y)
+    z = torch.cat((x, y), dim=0)
+    if metric == "euclidean":
+        metric = 2.0
+    D = torch.cdist(z, z, p=metric)
+    Exx = D[:nx, :nx].sum() / nx**2
+    Eyy = D[nx:, nx:].sum() / ny**2
+    Exy = D[:nx, nx:].sum() / (nx * ny)
+    return (2 * Exy - Exx - Eyy).item()
+
+
+def _energy_distance_precompute(
+    D: Union[np.ndarray, torch.Tensor], nx: int, ny: int
+) -> Union[float, torch.Tensor]:
+    Exx = D[:nx, :nx].sum() / nx**2
+    Eyy = D[nx:, nx:].sum() / ny**2
+    Exy = D[:nx, nx:].sum() / (nx * ny)
+    return 2 * Exy - Exx - Eyy
+
+
+def _energy_distance_estimate_numpy(
+    x: np.ndarray,
+    y: np.ndarray,
+    chunk_size: int,
+    chunk_iter: int,
+    metric: Union[str, float] = "euclidean",
+) -> float:
 
     E_est = []
     for _ in range(chunk_iter):
         # Randomly sample a chunk of data
         idx = np.random.choice(len(x), size=min(len(x), chunk_size), replace=False)
-        if is_torch:
-            idx = torch.tensor(idx, device=x.device)
         x_chunk = x[idx]
         idy = np.random.choice(len(y), size=min(len(y), chunk_size), replace=False)
-        if is_torch:
-            idy = torch.tensor(idy, device=y.device)
         y_chunk = y[idy]
 
-        # Compute the distance matrix
-        if is_torch:
-            z_chunk = torch.cat((x_chunk, y_chunk), dim=0)
-        else:
-            z_chunk = np.concatenate((x_chunk, y_chunk), axis=0)
-        dmatrix = cdist(z_chunk, z_chunk, metric=metric)
-
         # Compute the energy distance
-        E_est.append(_energy_distance_precompute(dmatrix, len(x_chunk), len(y_chunk)))
-        if is_torch:
-            E_est[-1] = E_est[-1].item()
+        E_est.append(_energy_distance_numpy(x_chunk, y_chunk, metric=metric))
     return np.mean(E_est)
 
 
-def _pted_chunk_numpy(x, y, permutations=100, metric="euclidean", chunk_size=100, chunk_iter=10):
+def _energy_distance_estimate_torch(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    chunk_size: int,
+    chunk_iter: int,
+    metric: Union[str, float] = "euclidean",
+) -> float:
+
+    E_est = []
+    for _ in range(chunk_iter):
+        # Randomly sample a chunk of data
+        idx = np.random.choice(len(x), size=min(len(x), chunk_size), replace=False)
+        x_chunk = x[torch.tensor(idx)]
+        idy = np.random.choice(len(y), size=min(len(y), chunk_size), replace=False)
+        y_chunk = y[torch.tensor(idy)]
+
+        # Compute the energy distance
+        E_est.append(_energy_distance_torch(x_chunk, y_chunk, metric=metric))
+    return np.mean(E_est)
+
+
+def _pted_chunk_numpy(
+    x: np.ndarray,
+    y: np.ndarray,
+    permutations: int = 100,
+    metric: str = "euclidean",
+    chunk_size: int = 100,
+    chunk_iter: int = 10,
+) -> tuple[float, list[float]]:
     assert np.all(np.isfinite(x)) and np.all(np.isfinite(y)), "Input contains NaN or Inf!"
     nx = len(x)
 
-    test_stat = _energy_distance_estimate(x, y, chunk_size, chunk_iter, metric=metric)
+    test_stat = _energy_distance_estimate_numpy(x, y, chunk_size, chunk_iter, metric=metric)
     permute_stats = []
     for _ in range(permutations):
         z = np.concatenate((x, y), axis=0)
         z = z[np.random.permutation(len(z))]
         x, y = z[:nx], z[nx:]
-        permute_stats.append(_energy_distance_estimate(x, y, chunk_size, chunk_iter, metric=metric))
+        permute_stats.append(
+            _energy_distance_estimate_numpy(x, y, chunk_size, chunk_iter, metric=metric)
+        )
     return test_stat, permute_stats
 
 
-def _pted_chunk_torch(x, y, permutations=100, metric="euclidean", chunk_size=100, chunk_iter=10):
+def _pted_chunk_torch(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    permutations: int = 100,
+    metric: Union[str, float] = "euclidean",
+    chunk_size: int = 100,
+    chunk_iter: int = 10,
+) -> tuple[float, list[float]]:
     assert torch.all(torch.isfinite(x)) and torch.all(
         torch.isfinite(y)
     ), "Input contains NaN or Inf!"
     nx = len(x)
 
-    test_stat = _energy_distance_estimate(x, y, chunk_size, chunk_iter, metric=metric)
+    test_stat = _energy_distance_estimate_torch(x, y, chunk_size, chunk_iter, metric=metric)
     permute_stats = []
     for _ in range(permutations):
         z = torch.cat((x, y), dim=0)
         z = z[torch.randperm(len(z))]
         x, y = z[:nx], z[nx:]
-        permute_stats.append(_energy_distance_estimate(x, y, chunk_size, chunk_iter, metric=metric))
+        permute_stats.append(
+            _energy_distance_estimate_torch(x, y, chunk_size, chunk_iter, metric=metric)
+        )
     return test_stat, permute_stats
 
 
-def _pted_numpy(x, y, permutations=100, metric="euclidean"):
+def _pted_numpy(
+    x: np.ndarray, y: np.ndarray, permutations: int = 100, metric: str = "euclidean"
+) -> tuple[float, list[float]]:
     z = np.concatenate((x, y), axis=0)
     assert np.all(np.isfinite(z)), "Input contains NaN or Inf!"
     dmatrix = cdist(z, z, metric=metric)
@@ -91,7 +152,12 @@ def _pted_numpy(x, y, permutations=100, metric="euclidean"):
 
 
 @torch.no_grad()
-def _pted_torch(x, y, permutations=100, metric="euclidean"):
+def _pted_torch(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    permutations: int = 100,
+    metric: Union[str, float] = "euclidean",
+) -> tuple[float, list[float]]:
     z = torch.cat((x, y), dim=0)
     assert torch.all(torch.isfinite(z)), "Input contains NaN or Inf!"
     if metric == "euclidean":
