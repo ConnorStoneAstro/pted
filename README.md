@@ -5,6 +5,7 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/pted)
 [![codecov](https://codecov.io/gh/ConnorStoneAstro/pted/graph/badge.svg?token=5LISJ5BN17)](https://codecov.io/gh/ConnorStoneAstro/pted)
+[![DOI](https://zenodo.org/badge/966938845.svg)](https://doi.org/10.5281/zenodo.15353928)
 
 Think of it like a multi-dimensional KS-test! It is used for two sample testing
 and posterior coverage tests. In some cases it is even more sensitive than the
@@ -109,6 +110,10 @@ greater than the current one.
 
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
 PyTorch Tensors on the appropriate device.
+
+## Citation
+
+If you use PTED in your work, please include a citation to the [zenodo record](https://doi.org/10.5281/zenodo.15353928) and also see below for references of the underlying method.
 
 ## Reference
 
