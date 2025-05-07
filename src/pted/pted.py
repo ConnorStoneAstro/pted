@@ -12,11 +12,11 @@ def pted(
     x: Union[np.ndarray, Tensor],
     y: Union[np.ndarray, Tensor],
     permutations: int = 1000,
-    metric: str = "euclidean",
+    metric: Union[str, float] = "euclidean",
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
-):
+) -> Union[float, tuple[float, np.ndarray]]:
     """
     Two sample null hypothesis test using a permutation test on the energy
     distance.
@@ -100,6 +100,9 @@ def pted(
     assert type(x) == type(y), f"x and y must be of the same type, not {type(x)} and {type(y)}"
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
     assert len(y.shape) >= 2, f"y must be at least 2D, not {y.shape}"
+    assert (chunk_size is not None) is (
+        chunk_iter is not None
+    ), "chunk_size and chunk_iter must both be provided for chunked PTED test"
     assert (
         x.shape[1:] == y.shape[1:]
     ), f"x and y samples must have the same shape (past first dim), not {x.shape} and {y.shape}"
@@ -114,8 +117,8 @@ def pted(
             y,
             permutations=permutations,
             metric=metric,
-            chunk_size=chunk_size,
-            chunk_iter=chunk_iter,
+            chunk_size=int(chunk_size),
+            chunk_iter=int(chunk_iter),
         )
     elif isinstance(x, Tensor):
         test, permute = _pted_torch(x, y, permutations=permutations, metric=metric)
@@ -125,17 +128,18 @@ def pted(
             y,
             permutations=permutations,
             metric=metric,
-            chunk_size=chunk_size,
-            chunk_iter=chunk_iter,
+            chunk_size=int(chunk_size),
+            chunk_iter=int(chunk_iter),
         )
     else:
         test, permute = _pted_numpy(x, y, permutations=permutations, metric=metric)
 
+    permute = np.array(permute)
     if return_all:
         return test, permute
 
     # Compute p-value
-    return np.mean(np.array(permute) > test)
+    return np.mean(permute > test)
 
 
 def pted_coverage_test(
@@ -146,7 +150,7 @@ def pted_coverage_test(
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
-):
+) -> Union[float, tuple[np.ndarray, np.ndarray]]:
     """
     Coverage test using a permutation test on the energy distance.
 
@@ -229,7 +233,7 @@ def pted_coverage_test(
         number of iterations, D is the number of dimensions, and P is the number
         of permutations. For chunking to be worth it you should have c^2 * I << n^2.
     """
-    nsamp, nsim, *D = s.shape
+    nsamp, nsim, *_ = s.shape
     assert (
         g.shape == s.shape[1:]
     ), f"g and s must have the same shape (past first dim of s), not {g.shape} and {s.shape}"
@@ -252,7 +256,7 @@ def pted_coverage_test(
         test_stats.append(test)
         permute_stats.append(permute)
     test_stats = np.array(test_stats)
-    permute_stats = np.array(permute_stats)
+    permute_stats = np.stack(permute_stats)
 
     if return_all:
         return test_stats, permute_stats
