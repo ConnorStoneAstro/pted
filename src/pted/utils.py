@@ -199,12 +199,7 @@ def two_tailed_p(chi2, df):
     if chi2 > mode:
         right = chi2_dist.sf(chi2, df)
     else:
-        try:
-            res_right = root_scalar(
-                lambda x: root_eq(x), bracket=[mode, 1000 * df], method="brentq"
-            )
-            right = chi2_dist.sf(res_right.root, df)
-        except ValueError:
-            right = 0.0  # Assume negligible
+        res_right = root_scalar(root_eq, bracket=[mode, 10000 * df], method="brentq")
+        right = chi2_dist.sf(res_right.root, df)
 
     return left + right
