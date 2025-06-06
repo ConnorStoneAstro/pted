@@ -182,7 +182,7 @@ def two_tailed_p(chi2, df):
     alpha = chi2_dist.pdf(chi2, df)
     mode = df - 2
 
-    if chi2 == mode:
+    if np.isclose(chi2, mode):
         return 1.0
 
     def root_eq(x):
@@ -203,7 +203,11 @@ def two_tailed_p(chi2, df):
         right = chi2_dist.sf(chi2, df)
     else:
         try:
-            res_right = root_scalar(root_eq, bracket=[mode, 100 * df], method="brentq")
+            res_right = root_scalar(
+                lambda x: root_eq(x), bracket=[mode, 1000 * df], method="brentq"
+            )
+            if not res_right.converged:
+                raise ValueError
             right = chi2_dist.sf(res_right.root, df)
         except ValueError:
             right = 0.0  # Assume negligible

@@ -87,3 +87,11 @@ def test_pted_chunk_numpy():
     y = np.random.uniform(size=(1000, D))
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
     assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+
+
+def test_pted_coverage_edgecase():
+    # Test with single simulation
+    g = np.random.normal(size=(1, 10))
+    s = np.random.normal(size=(100, 1, 10))
+    p = pted.pted_coverage_test(g, s)
+    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (~1)"

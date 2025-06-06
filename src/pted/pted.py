@@ -234,6 +234,7 @@ def pted_coverage_test(
         of permutations. For chunking to be worth it you should have c^2 * I << n^2.
     """
     nsamp, nsim, *_ = s.shape
+    assert nsim > 0, "need some simulations to run test, got 0 simulations"
     assert (
         g.shape == s.shape[1:]
     ), f"g and s must have the same shape (past first dim of s), not {g.shape} and {s.shape}"
