@@ -192,11 +192,8 @@ def two_tailed_p(chi2, df):
     if chi2 < mode:
         left = chi2_dist.cdf(chi2, df)
     else:
-        try:
-            res_left = root_scalar(root_eq, bracket=[0, mode], method="brentq")
-            left = chi2_dist.cdf(res_left.root, df)
-        except ValueError:
-            left = 0.0  # Assume negligible
+        res_left = root_scalar(root_eq, bracket=[0, mode], method="brentq")
+        left = chi2_dist.cdf(res_left.root, df)
 
     # Find right root
     if chi2 > mode:
