@@ -62,6 +62,8 @@ print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 
 ## How it works
 
+### Two sample test
+
 PTED uses the energy distance of the two samples `x` and `y`, this is computed as:
 
 $$d = \frac{2}{n_xn_y}\sum_{i,j}||x_i - y_j|| - \frac{1}{n_x^2}\sum_{i,j}||x_i - x_j|| - \frac{1}{n_y^2}\sum_{i,j}||y_i - y_j||$$
@@ -105,6 +107,21 @@ grey distribution is just a histogram of many re-runs of this procedure. We
 compute a p-value by taking the fraction of the energy distances that are
 greater than the current one.
 
+### Coverage test
+
+In the coverage test we have some number of simulations `nsim` where there is a
+true value `g` and some posterior samples `s`. For each simulation separately we
+use PTED to compute a p-value, essentially asking the question "was `g` drawn
+from the distribution that generated `s`?". Individually, these tests are not
+especially informative, however their p-values must have been drawn from
+`U(0,1)` under the null-hypothesis. Thus we just need a way to combine their
+statistical power. It turns out that for some `p ~ U(0,1)` value, we have that
+`- 2 ln(p)` is chi2 distributed with `dof = 2`. This means that we can sum the
+chi2 values for the PTED test on each simulation and compare with a chi2
+distribution with `dof = 2 * nsim`. We use a density based two tailed p-value
+test on this chi2 distribution meaning that if your posterior is underconfident
+or overconfident, you will get a small p-value that can be used to reject the
+null.
 
 ## GPU Compatibility
 
@@ -113,7 +130,9 @@ PyTorch Tensors on the appropriate device.
 
 ## Citation
 
-If you use PTED in your work, please include a citation to the [zenodo record](https://doi.org/10.5281/zenodo.15353928) and also see below for references of the underlying method.
+If you use PTED in your work, please include a citation to the [zenodo
+record](https://doi.org/10.5281/zenodo.15353928) and also see below for
+references of the underlying method.
 
 ## Reference
 
@@ -132,7 +151,8 @@ I didn't invent this test, I just think its neat. Here is a paper on the subject
 }
 ```
 
-Permutation tests are a whole class of tests, with much literature. Here are some starting points:
+Permutation tests are a whole class of tests, with much literature. Here are
+some starting points:
 
 ```
 @book{good2013permutation,
