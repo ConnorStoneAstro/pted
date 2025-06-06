@@ -203,8 +203,6 @@ def two_tailed_p(chi2, df):
             res_right = root_scalar(
                 lambda x: root_eq(x), bracket=[mode, 1000 * df], method="brentq"
             )
-            if not res_right.converged:
-                raise ValueError
             right = chi2_dist.sf(res_right.root, df)
         except ValueError:
             right = 0.0  # Assume negligible

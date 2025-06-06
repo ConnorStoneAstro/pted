@@ -14,7 +14,7 @@ def test_two_tailed_p():
     assert two_tailed_p(10, 10) > 0.01, "p-value should be close to 0.5 for chi2 near mode"
 
     assert two_tailed_p(0, 10) < 0.01
-    assert two_tailed_p(1e-10, 100) < 0.01
+    assert two_tailed_p(1e-25, 1000) < 0.01
 
     with pytest.raises(AssertionError):
         two_tailed_p(4, 2)
