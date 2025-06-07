@@ -3,7 +3,7 @@ import numpy as np
 from scipy.stats import chi2 as chi2_dist
 from torch import Tensor
 
-from .utils import _pted_torch, _pted_numpy, _pted_chunk_torch, _pted_chunk_numpy
+from .utils import _pted_torch, _pted_numpy, _pted_chunk_torch, _pted_chunk_numpy, two_tailed_p
 
 __all__ = ["pted", "pted_coverage_test"]
 
@@ -234,6 +234,7 @@ def pted_coverage_test(
         of permutations. For chunking to be worth it you should have c^2 * I << n^2.
     """
     nsamp, nsim, *_ = s.shape
+    assert nsim > 0, "need some simulations to run test, got 0 simulations"
     assert (
         g.shape == s.shape[1:]
     ), f"g and s must have the same shape (past first dim of s), not {g.shape} and {s.shape}"
@@ -262,7 +263,9 @@ def pted_coverage_test(
         return test_stats, permute_stats
 
     # Compute p-values
+    if nsim == 1:
+        return np.mean(permute_stats > test_stats[0])
     pvals = np.mean(permute_stats > test_stats[:, None], axis=1)
     pvals[pvals == 0] = 1.0 / permutations  # handle pvals == 0
-    chi2 = -2 * np.log(pvals)
-    return 1 - chi2_dist.cdf(np.sum(chi2), 2 * nsim)
+    chi2 = np.sum(-2 * np.log(pvals))
+    return two_tailed_p(chi2, 2 * nsim)

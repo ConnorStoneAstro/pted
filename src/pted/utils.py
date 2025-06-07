@@ -3,6 +3,9 @@ from typing import Optional, Union
 import numpy as np
 from scipy.spatial.distance import cdist
 import torch
+from scipy.stats import chi2 as chi2_dist
+from scipy.optimize import root_scalar
+
 
 __all__ = ["_pted_numpy", "_pted_chunk_numpy", "_pted_torch", "_pted_chunk_torch"]
 
@@ -172,3 +175,31 @@ def _pted_torch(
         dmatrix = dmatrix[I][:, I]
         permute_stats.append(_energy_distance_precompute(dmatrix, nx, ny).item())
     return test_stat, permute_stats
+
+
+def two_tailed_p(chi2, df):
+    assert df > 2, "Degrees of freedom must be greater than 2 for two-tailed p-value calculation."
+    alpha = chi2_dist.pdf(chi2, df)
+    mode = df - 2
+
+    if np.isclose(chi2, mode):
+        return 1.0
+
+    def root_eq(x):
+        return chi2_dist.pdf(x, df) - alpha
+
+    # Find left root
+    if chi2 < mode:
+        left = chi2_dist.cdf(chi2, df)
+    else:
+        res_left = root_scalar(root_eq, bracket=[0, mode], method="brentq")
+        left = chi2_dist.cdf(res_left.root, df)
+
+    # Find right root
+    if chi2 > mode:
+        right = chi2_dist.sf(chi2, df)
+    else:
+        res_right = root_scalar(root_eq, bracket=[mode, 10000 * df], method="brentq")
+        right = chi2_dist.sf(res_right.root, df)
+
+    return left + right

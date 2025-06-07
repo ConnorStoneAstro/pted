@@ -49,6 +49,6 @@ def test():
     assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
     # underconfident
     p = pted_coverage_test(g, s_under, permutations=200)
-    assert p > 0.9999, f"p-value {p} is not in the expected range (~1)"
+    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
 
     print("Tests passed!")
