@@ -1,4 +1,5 @@
-from typing import Optional, Union
+from typing import Union
+from warnings import warn
 
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -203,3 +204,30 @@ def two_tailed_p(chi2, df):
         right = chi2_dist.sf(res_right.root, df)
 
     return left + right
+
+
+class OverconfidenceWarning(UserWarning):
+    """Warning for overconfidence in chi-squared test results."""
+
+
+class UnderconfidenceWarning(UserWarning):
+    """Warning for underconfidence in chi-squared test results."""
+
+
+def confidence_alert(chi2, df, level):
+
+    left_tail = chi2_dist.cdf(chi2, df)
+    right_tail = chi2_dist.sf(chi2, df)
+
+    if left_tail < level:
+        warn(
+            UnderconfidenceWarning(
+                f"Chi^2 of {chi2:.2e} for degrees of freedom {df} indicates underconfidence (left tail p-value {left_tail:.2e} < {level:.2e})."
+            )
+        )
+    elif right_tail < level:
+        warn(
+            OverconfidenceWarning(
+                f"Chi^2 of {chi2:.2e} for degrees of freedom {df} indicates overconfidence (right tail p-value {right_tail:.2e} < {level:.2e})."
+            )
+        )
