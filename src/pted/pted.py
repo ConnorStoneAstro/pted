@@ -3,7 +3,14 @@ import numpy as np
 from scipy.stats import chi2 as chi2_dist
 from torch import Tensor
 
-from .utils import _pted_torch, _pted_numpy, _pted_chunk_torch, _pted_chunk_numpy, two_tailed_p
+from .utils import (
+    _pted_torch,
+    _pted_numpy,
+    _pted_chunk_torch,
+    _pted_chunk_numpy,
+    two_tailed_p,
+    confidence_alert,
+)
 
 __all__ = ["pted", "pted_coverage_test"]
 
@@ -147,6 +154,7 @@ def pted_coverage_test(
     s: Union[np.ndarray, Tensor],
     permutations: int = 1000,
     metric: str = "euclidean",
+    warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
@@ -268,4 +276,6 @@ def pted_coverage_test(
     pvals = np.mean(permute_stats > test_stats[:, None], axis=1)
     pvals[pvals == 0] = 1.0 / permutations  # handle pvals == 0
     chi2 = np.sum(-2 * np.log(pvals))
+    if warn_confidence is not None:
+        confidence_alert(chi2, 2 * nsim, warn_confidence)
     return two_tailed_p(chi2, 2 * nsim)
