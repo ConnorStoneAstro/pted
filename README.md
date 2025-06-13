@@ -162,7 +162,7 @@ your posterior is biased, you may have an appropriately broad posterior, but it
 is in the wrong part of your parameter space. PTED has no way to distinguish
 these modes of overconfidence, however just knowing under/over-confidence can be
 powerful. As such, by default the PTED coverage test will warn users as to which
-kind of failure mode they are in if the `warn_coverage` parameter is not `None`.
+kind of failure mode they are in if the `warn_confidence` parameter is not `None`.
 
 ## GPU Compatibility
 

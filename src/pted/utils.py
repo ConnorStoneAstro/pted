@@ -206,6 +206,14 @@ def two_tailed_p(chi2, df):
     return left + right
 
 
+class OverconfidenceWarning(UserWarning):
+    """Warning for overconfidence in chi-squared test results."""
+
+
+class UnderconfidenceWarning(UserWarning):
+    """Warning for underconfidence in chi-squared test results."""
+
+
 def confidence_alert(chi2, df, level):
 
     left_tail = chi2_dist.cdf(chi2, df)
@@ -213,11 +221,13 @@ def confidence_alert(chi2, df, level):
 
     if left_tail < level:
         warn(
-            f"Chi^2 of {chi2:.2e} for degrees of freedom {df} indicates underconfidence (left tail p-value {left_tail:.2e} < {level:.2e}).",
-            UserWarning,
+            UnderconfidenceWarning(
+                f"Chi^2 of {chi2:.2e} for degrees of freedom {df} indicates underconfidence (left tail p-value {left_tail:.2e} < {level:.2e})."
+            )
         )
     elif right_tail < level:
         warn(
-            f"Chi^2 of {chi2:.2e} for degrees of freedom {df} indicates overconfidence (right tail p-value {right_tail:.2e} < {level:.2e}).",
-            UserWarning,
+            OverconfidenceWarning(
+                f"Chi^2 of {chi2:.2e} for degrees of freedom {df} indicates overconfidence (right tail p-value {right_tail:.2e} < {level:.2e})."
+            )
         )
