@@ -2,6 +2,8 @@ import pted
 import torch
 import numpy as np
 
+import pytest
+
 
 def test_inputs_extra_dims():
     np.random.seed(42)
@@ -95,3 +97,12 @@ def test_pted_coverage_edgecase():
     s = np.random.normal(size=(100, 1, 10))
     p = pted.pted_coverage_test(g, s)
     assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (~1)"
+
+
+def test_pted_coverage_overunder():
+    g = torch.randn(100, 3)
+    s = torch.randn(50, 100, 3)
+    with pytest.warns(pted.utils.OverconfidenceWarning):
+        p = pted.pted_coverage_test(g, s * 0.5)
+    with pytest.warns(pted.utils.UnderconfidenceWarning):
+        p = pted.pted_coverage_test(g, s * 2)
