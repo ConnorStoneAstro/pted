@@ -123,6 +123,50 @@ test on this chi2 distribution meaning that if your posterior is underconfident
 or overconfident, you will get a small p-value that can be used to reject the
 null.
 
+## Interpreting the results
+
+### Two sample test
+
+This is a null hypothesis test, thus we are specifically asking the question:
+"if `x` and `y` were drawn from the same distribution, how likely am I to have
+observed an energy distance as extreme as this?" This is fundamentally different
+from the question "how likely is it that `x` and `y` were drawn from the same
+distribution?" Which is really what we would like to ask, but I am unaware of
+how we would do that in a meaningful way. It is also important to note that we
+are specifically looking at extreme energy distances, so we are not even really
+talking about the probability densities directly. If there was a transformation
+between `x` and `y` that the energy distance was insensitive to, then the two
+distributions could potentially be arbitrarily different without PTED
+identifying it. For example, since the default energy distance is computed with
+the Euclidean distance, a single dimension in which the values are orders of
+magnitude larger than the others could make it so that all other dimensions are
+ignored and could be very different. For this reason we suggest using the metric
+`mahalanobis` if this is a potential issue in your data.
+
+### Coverage Test
+
+For the coverage test we apply the PTED two sample test to each simulation
+separately. We then combine the resulting p-values using chi squared where the
+resulting degrees of freedom is 2 times the number of simulations. Because of
+this, we can detect underconfidence or overconfidence. Specifically we detect
+the average over/under confidence, it is possible to be overconfident in some
+parts of the posterior and underconfident in others. Underconfidence is when the
+posterior distribution is too large, it covers the ground truth by spreading too
+thin and not fully exploiting the information in the prior/likelihood of the
+posterior sampling process. Sometimes this is acceptable/expected, for example
+when using Approximate Bayesian Computation one expects the posterior to be at
+least slightly underconfident. Overconfidence is when the posterior is too
+narrow and so the ground truth appears as an outlier from its perspective. This
+can occur in two main ways, one is by having a too narrow posterior. This could
+occur if the measurement uncertainty estimates were too low or there were
+sources of error not accounted for in the model. Another way is if your
+posterior is biased, you may have an appropriately broad posterior, but it is in
+the wrong part of your parameter space. PTED has no way to distinguish these
+modes of overconfidence, however just knowing under/over-confidence can be
+powerful. As such, by default the PTED coverage test will warn users as to which
+kind of failure mode they are in if the `warn_confidence` parameter is not
+`None` (default is 1e-3).
+
 ## GPU Compatibility
 
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
