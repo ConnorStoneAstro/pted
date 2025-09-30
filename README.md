@@ -123,6 +123,48 @@ test on this chi2 distribution meaning that if your posterior is underconfident
 or overconfident, you will get a small p-value that can be used to reject the
 null.
 
+## Example: Sensitivity comparison with KS-test
+
+There is no single universally optimal two sample test, but a widely used method
+in 1D is called the Kolmogorov-Smirnov (KS)-test. The KS-test operates
+fundamentally differently from PTED and can only really work in 1D. Here I do a
+super basic comparison of the two methods. Draw two samples of 100 Gaussian
+distributed points, thus the null hypothesis is true for these points. Then
+slowly add a bias to one of the samples to shift everything by up to 0.5 sigma.
+This shows the point when each method would spot the issue by tracking how the
+p-value drops. If you run this test hundreds of times you will find that PTED is
+more sensitive to this kind of bias than the KS-test, I plotted a representative
+single example. Note it is just by chance that they start at the same p-value.
+
+```python
+from pted import pted
+import numpy as np
+from scipy.stats import kstest
+import matplotlib.pyplot as plt
+
+np.random.seed(10101)
+x = np.random.normal(size = (100, 1))
+y = np.random.normal(size = (100, 1))
+
+bias = np.linspace(0, 0.5, 25)
+pted_p = np.zeros(25)
+ks_p = np.zeros(25)
+for i, b in enumerate(bias):
+  pted_p[i] = pted(x, y + b)
+  ks_p[i] = kstest(x[:,0], y[:,0] + b).pvalue
+
+plt.plot(bias, pted_p, linewidth=3, c="b", label="PTED")
+plt.plot(bias, ks_p, linewidth=3, c="r", label="KS")
+plt.legend()
+plt.ylim(0,1)
+plt.xlim(0,0.5)
+plt.xlabel("Out of distribution bias [sigma]")
+plt.ylabel("p-value")
+plt.show()
+```
+
+![pted demo KS comparison](media/pted_ks.png)
+
 ## Interpreting the results
 
 ### Two sample test
