@@ -10,16 +10,16 @@ def test():
         x = np.random.normal(size=(100, D))
         y = np.random.normal(size=(100, D))
         p = pted(x, y)
-        assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+        assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     x = np.random.normal(size=(100, D))
     y = np.random.uniform(size=(100, D))
     p = pted(x, y)
-    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
     x = np.random.normal(size=(100, D))
     p = pted(x, x)
-    assert p > 0.9999, f"p-value {p} is not in the expected range (~1)"
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
     # example coverage
     n_sims = 100
@@ -43,12 +43,12 @@ def test():
 
     # correct
     p = pted_coverage_test(g, s_corr, permutations=200)
-    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
     # overconfident
     p = pted_coverage_test(g, s_over, permutations=200, warn_confidence=None)
-    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
     # underconfident
     p = pted_coverage_test(g, s_under, permutations=200, warn_confidence=None)
-    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
     print("Tests passed!")

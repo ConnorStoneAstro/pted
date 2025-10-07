@@ -1,13 +1,12 @@
 from typing import Union, Optional
 import numpy as np
-from scipy.stats import chi2 as chi2_dist
-from torch import Tensor
 
 from .utils import (
-    _pted_torch,
-    _pted_numpy,
-    _pted_chunk_torch,
-    _pted_chunk_numpy,
+    is_torch_tensor,
+    pted_torch,
+    pted_numpy,
+    pted_chunk_torch,
+    pted_chunk_numpy,
     two_tailed_p,
     confidence_alert,
 )
@@ -16,13 +15,14 @@ __all__ = ["pted", "pted_coverage_test"]
 
 
 def pted(
-    x: Union[np.ndarray, Tensor],
-    y: Union[np.ndarray, Tensor],
+    x: Union[np.ndarray, "Tensor"],
+    y: Union[np.ndarray, "Tensor"],
     permutations: int = 1000,
     metric: Union[str, float] = "euclidean",
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
+    two_tailed: bool = True,
 ) -> Union[float, tuple[float, np.ndarray]]:
     """
     Two sample null hypothesis test using a permutation test on the energy
@@ -51,8 +51,8 @@ def pted(
             z = shuffle(z)
             x, y = z[:nx], z[nx:]
             permute_stats.append(energy_distance(x, y))
-        p = mean(permute_stats > test_stat)
-        return p
+        p = sum(permute_stats > test_stat)
+        return (1 + p) / (1 + permutations)
 
     Example
     -------
@@ -85,6 +85,9 @@ def pted(
             dataset.
         chunk_iter (Optional[int]): The chunk iter is the number of iterations
             to use with the given chunk size.
+        two_tailed (bool): if True, compute a two-tailed p-value. This is useful
+            if you want to reject the null hypothesis when x and y are either
+            too similar or too different. Default is True.
 
     Note
     ----
@@ -118,8 +121,8 @@ def pted(
     if len(y.shape) > 2:
         y = y.reshape(y.shape[0], -1)
 
-    if isinstance(x, Tensor) and chunk_size is not None:
-        test, permute = _pted_chunk_torch(
+    if is_torch_tensor(x) and chunk_size is not None:
+        test, permute = pted_chunk_torch(
             x,
             y,
             permutations=permutations,
@@ -127,10 +130,10 @@ def pted(
             chunk_size=int(chunk_size),
             chunk_iter=int(chunk_iter),
         )
-    elif isinstance(x, Tensor):
-        test, permute = _pted_torch(x, y, permutations=permutations, metric=metric)
+    elif is_torch_tensor(x):
+        test, permute = pted_torch(x, y, permutations=permutations, metric=metric)
     elif chunk_size is not None:
-        test, permute = _pted_chunk_numpy(
+        test, permute = pted_chunk_numpy(
             x,
             y,
             permutations=permutations,
@@ -139,19 +142,23 @@ def pted(
             chunk_iter=int(chunk_iter),
         )
     else:
-        test, permute = _pted_numpy(x, y, permutations=permutations, metric=metric)
+        test, permute = pted_numpy(x, y, permutations=permutations, metric=metric)
 
     permute = np.array(permute)
     if return_all:
         return test, permute
 
     # Compute p-value
-    return np.mean(permute > test)
+    if two_tailed:
+        q = 2 * min(np.sum(permute >= test), np.sum(permute <= test))
+    else:
+        q = np.sum(permute >= test)
+    return (1.0 + q) / (1.0 + permutations)
 
 
 def pted_coverage_test(
-    g: Union[np.ndarray, Tensor],
-    s: Union[np.ndarray, Tensor],
+    g: Union[np.ndarray, "Tensor"],
+    s: Union[np.ndarray, "Tensor"],
     permutations: int = 1000,
     metric: str = "euclidean",
     warn_confidence: Optional[float] = 1e-3,
@@ -273,8 +280,7 @@ def pted_coverage_test(
     # Compute p-values
     if nsim == 1:
         return np.mean(permute_stats > test_stats[0])
-    pvals = np.mean(permute_stats > test_stats[:, None], axis=1)
-    pvals[pvals == 0] = 1.0 / permutations  # handle pvals == 0
+    pvals = (1.0 + np.sum(permute_stats > test_stats[:, None], axis=1)) / (1.0 + permutations)
     chi2 = np.sum(-2 * np.log(pvals))
     if warn_confidence is not None:
         confidence_alert(chi2, 2 * nsim, warn_confidence)
