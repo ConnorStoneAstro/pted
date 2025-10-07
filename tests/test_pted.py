@@ -17,6 +17,8 @@ def test_inputs_extra_dims():
     p = pted.pted(x, y)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
+    if torch is None:
+        pytest.skip("torch not installed")
     # Test with torch tensors
     g = torch.randn(100, 30, 30)
     s = torch.randn(50, 100, 30, 30)
