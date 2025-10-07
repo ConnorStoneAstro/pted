@@ -21,18 +21,32 @@ To install PTED, run the following:
 pip install pted
 ```
 
-## Usage
+If you want to run PTED on GPUs using PyTorch, then also install torch:
+
+```bash
+pip install torch
+```
+
+The two functions are ``pted.pted`` and ``pted.pted_coverage_test``. For
+information about each argument, just use ``help(pted.pted)`` or
+``help(pted.pted_coverage_test)``. 
+
+## What does PTED do?
 
 PTED (pronounced "ted") takes in `x` and `y` two datasets and determines if they
-come from the same underlying distribution. For information about each argument,
-just use ``help(pted.pted)`` or ``help(pted.pted_coverage_test)``.
+come from the same underlying distribution. 
 
-The returned value is a p-value, an estimate of the probability of a more
-extreme instance occurring. Under the null hypothesis, a p-value is drawn from a
-random uniform distribution (range 0 to 1). If the null hypothesis is false, one
-would expect to see very low p-values and so one can set a limit such as
-`p=0.01` below which we reject the null hypothesis. In this case `1/100`th of
-the time even when the null hypothesis is true, we will reject the null. 
+PTED is useful for:
+
+* "were these two samples drawn from the same distribution?" this works even with noise, so long as the noise distribution is also the same for each sample
+* Evaluate the coverage of a posterior sampling procedure
+* Check for MCMC chain convergence. Split the chain in half or take two chains, that's two samples, if the chain is well mixed then these ought to be drawn from the same distribution
+* Evaluate the performance of a generative model. PTED is powerful here as it can detect overfitting to the training sample.
+* Evaluate if a simulator generates true "data-like" samples
+* PTED can be a distance metric for Approximate Bayesian Computing posteriors
+* Check for drift in a time series, comparing samples before/after some cutoff time
+
+And much more!
 
 ## Example: Two-Sample-Test
 
@@ -122,6 +136,52 @@ distribution with `dof = 2 * nsim`. We use a density based two tailed p-value
 test on this chi2 distribution meaning that if your posterior is underconfident
 or overconfident, you will get a small p-value that can be used to reject the
 null.
+
+## Example: Sensitivity comparison with KS-test
+
+There is no single universally optimal two sample test, but a widely used method
+in 1D is called the Kolmogorov-Smirnov (KS)-test. The KS-test operates
+fundamentally differently from PTED and can only really work in 1D. Here I do a
+super basic comparison of the two methods. Draw two samples of 100 Gaussian
+distributed points, thus the null hypothesis is true for these points. Then
+slowly bias one of the samples by changing the standard deviation up to 2 sigma.
+By tracking how the p-value drops we can see which method is more sensitive to
+this kind of mismatched sample. If you run this test a hundred times you will
+find that PTED is more sensitive to this kind of bias than the KS-test. Observe
+that both methods start around p=0.5 in the true null case (scale = 1), since
+they are both exact tests that truly sample U(0,1) under the null.
+
+```python
+from pted import pted
+import numpy as np
+from scipy.stats import kstest
+import matplotlib.pyplot as plt
+
+np.random.seed(0)
+
+scale = np.linspace(1.0, 2.0, 10)
+pted_p = np.zeros((10, 100))
+ks_p = np.zeros((10, 100))
+for i, s in enumerate(scale):
+    for trial in range(100):
+        x = np.random.normal(size=(100, 1))
+        y = np.random.normal(scale=s, size=(100, 1))
+        pted_p[i][trial] = pted(x, y, two_tailed=False)
+        ks_p[i][trial] = kstest(x[:, 0], y[:, 0]).pvalue
+
+plt.plot(scale, np.mean(pted_p, axis=1), linewidth=3, c="b", label="PTED")
+plt.plot(scale, np.mean(ks_p, axis=1), linewidth=3, c="r", label="KS")
+plt.legend()
+plt.ylim(0, None)
+plt.xlim(1, 2.0)
+plt.xlabel("Out of distribution scale [*sigma]")
+plt.ylabel("p-value")
+
+plt.savefig("pted_demo.png", bbox_inches="tight")
+plt.show()
+```
+
+![pted demo KS comparison](media/pted_ks.png)
 
 ## Interpreting the results
 

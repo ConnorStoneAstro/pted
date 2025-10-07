@@ -3,12 +3,38 @@ from warnings import warn
 
 import numpy as np
 from scipy.spatial.distance import cdist
-import torch
 from scipy.stats import chi2 as chi2_dist
 from scipy.optimize import root_scalar
 
+try:
+    import torch
+except ImportError:
 
-__all__ = ["_pted_numpy", "_pted_chunk_numpy", "_pted_torch", "_pted_chunk_torch"]
+    class torch:
+        __version__ = "null"
+        Tensor = np.ndarray
+
+
+__all__ = (
+    "is_torch_tensor",
+    "pted_numpy",
+    "pted_chunk_numpy",
+    "pted_torch",
+    "pted_chunk_torch",
+    "two_tailed_p",
+    "confidence_alert",
+)
+
+
+def is_torch_tensor(o):
+    t = type(o)
+    return (
+        hasattr(t, "__module__")
+        and t.__module__.startswith("torch")
+        and hasattr(o, "device")
+        and hasattr(o, "dtype")
+        and hasattr(o, "shape")
+    )
 
 
 def _energy_distance_precompute(
@@ -82,7 +108,7 @@ def _energy_distance_estimate_torch(
     return np.mean(E_est)
 
 
-def _pted_chunk_numpy(
+def pted_chunk_numpy(
     x: np.ndarray,
     y: np.ndarray,
     permutations: int = 100,
@@ -105,7 +131,7 @@ def _pted_chunk_numpy(
     return test_stat, permute_stats
 
 
-def _pted_chunk_torch(
+def pted_chunk_torch(
     x: torch.Tensor,
     y: torch.Tensor,
     permutations: int = 100,
@@ -113,6 +139,7 @@ def _pted_chunk_torch(
     chunk_size: int = 100,
     chunk_iter: int = 10,
 ) -> tuple[float, list[float]]:
+    assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
     assert torch.all(torch.isfinite(x)) and torch.all(
         torch.isfinite(y)
     ), "Input contains NaN or Inf!"
@@ -130,7 +157,7 @@ def _pted_chunk_torch(
     return test_stat, permute_stats
 
 
-def _pted_numpy(
+def pted_numpy(
     x: np.ndarray, y: np.ndarray, permutations: int = 100, metric: str = "euclidean"
 ) -> tuple[float, list[float]]:
     z = np.concatenate((x, y), axis=0)
@@ -151,13 +178,13 @@ def _pted_numpy(
     return test_stat, permute_stats
 
 
-@torch.no_grad()
-def _pted_torch(
+def pted_torch(
     x: torch.Tensor,
     y: torch.Tensor,
     permutations: int = 100,
     metric: Union[str, float] = "euclidean",
 ) -> tuple[float, list[float]]:
+    assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
     z = torch.cat((x, y), dim=0)
     assert torch.all(torch.isfinite(z)), "Input contains NaN or Inf!"
     if metric == "euclidean":

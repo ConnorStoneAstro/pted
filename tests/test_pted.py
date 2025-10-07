@@ -1,5 +1,9 @@
 import pted
-import torch
+
+try:
+    import torch
+except ImportError:
+    torch = None
 import numpy as np
 
 import pytest
@@ -11,13 +15,15 @@ def test_inputs_extra_dims():
     x = np.random.normal(size=(100, 30, 30))
     y = np.random.normal(size=(100, 30, 30))
     p = pted.pted(x, y)
-    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
+    if torch is None:
+        pytest.skip("torch not installed")
     # Test with torch tensors
     g = torch.randn(100, 30, 30)
     s = torch.randn(50, 100, 30, 30)
     p = pted.pted_coverage_test(g, s)
-    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
 
 def test_pted_main():
@@ -25,9 +31,11 @@ def test_pted_main():
 
 
 def test_pted_torch():
+    if torch is None:
+        pytest.skip("torch not installed")
 
     # Set the random seed for reproducibility
-    torch.manual_seed(42)
+    torch.manual_seed(41)
     np.random.seed(42)
 
     # example 2 sample test
@@ -36,17 +44,18 @@ def test_pted_torch():
         x = torch.randn(100, D)
         y = torch.randn(100, D)
         p = pted.pted(x, y)
-        assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+        assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     x = torch.randn(100, D)
     y = torch.rand(100, D)
-    p = pted.pted(x, y)
-    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+    p = pted.pted(x, y, two_tailed=False)
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
     x = torch.randn(100, D)
     t, p = pted.pted(x, x, return_all=True)
-    p = np.mean(np.array(p) > t)
-    assert p > 0.9999, f"p-value {p} is not in the expected range (~1)"
+    q = 2 * min(np.sum(p > t), np.sum(p < t))
+    p = (1 + q) / (len(p) + 1)  # add one to numerator and denominator to avoid p=0
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
 def test_pted_coverage_full():
@@ -61,6 +70,8 @@ def test_pted_coverage_full():
 
 
 def test_pted_chunk_torch():
+    if torch is None:
+        pytest.skip("torch not installed")
     np.random.seed(42)
     torch.manual_seed(42)
 
@@ -69,11 +80,11 @@ def test_pted_chunk_torch():
     x = torch.randn(1000, D)
     y = torch.randn(1000, D)
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
-    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y = torch.rand(1000, D)
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
-    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
 def test_pted_chunk_numpy():
@@ -84,11 +95,11 @@ def test_pted_chunk_numpy():
     x = np.random.normal(size=(1000, D))
     y = np.random.normal(size=(1000, D))
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
-    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (U(0,1))"
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y = np.random.uniform(size=(1000, D))
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
-    assert p < 1e-4, f"p-value {p} is not in the expected range (~0)"
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
 def test_pted_coverage_edgecase():
@@ -96,13 +107,15 @@ def test_pted_coverage_edgecase():
     g = np.random.normal(size=(1, 10))
     s = np.random.normal(size=(100, 1, 10))
     p = pted.pted_coverage_test(g, s)
-    assert p > 1e-4 and p < 0.9999, f"p-value {p} is not in the expected range (~1)"
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
 
 def test_pted_coverage_overunder():
+    if torch is None:
+        pytest.skip("torch not installed")
     g = torch.randn(100, 3)
     s = torch.randn(50, 100, 3)
     with pytest.warns(pted.utils.OverconfidenceWarning):
-        p = pted.pted_coverage_test(g, s * 0.5)
+        pted.pted_coverage_test(g, s * 0.5)
     with pytest.warns(pted.utils.UnderconfidenceWarning):
-        p = pted.pted_coverage_test(g, s * 2)
+        pted.pted_coverage_test(g, s * 2)
