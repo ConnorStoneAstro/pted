@@ -1,5 +1,9 @@
 import pted
-import torch
+
+try:
+    import torch
+except ImportError:
+    torch = None
 import numpy as np
 
 import pytest
@@ -25,6 +29,8 @@ def test_pted_main():
 
 
 def test_pted_torch():
+    if torch is None:
+        pytest.skip("torch not installed")
 
     # Set the random seed for reproducibility
     torch.manual_seed(41)
@@ -40,7 +46,7 @@ def test_pted_torch():
 
     x = torch.randn(100, D)
     y = torch.rand(100, D)
-    p = pted.pted(x, y)
+    p = pted.pted(x, y, two_tailed=False)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
     x = torch.randn(100, D)
@@ -62,6 +68,8 @@ def test_pted_coverage_full():
 
 
 def test_pted_chunk_torch():
+    if torch is None:
+        pytest.skip("torch not installed")
     np.random.seed(42)
     torch.manual_seed(42)
 
@@ -101,6 +109,8 @@ def test_pted_coverage_edgecase():
 
 
 def test_pted_coverage_overunder():
+    if torch is None:
+        pytest.skip("torch not installed")
     g = torch.randn(100, 3)
     s = torch.randn(50, 100, 3)
     with pytest.warns(pted.utils.OverconfidenceWarning):
