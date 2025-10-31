@@ -245,7 +245,6 @@ def confidence_alert(chi2, df, level):
 
     left_tail = chi2_dist.cdf(chi2, df)
     right_tail = chi2_dist.sf(chi2, df)
-    print(left_tail, right_tail)
 
     if left_tail < level:
         warn(
