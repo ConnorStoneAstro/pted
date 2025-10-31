@@ -170,7 +170,7 @@ def pted_coverage_test(
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
-) -> Union[float, tuple[np.ndarray, np.ndarray]]:
+) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
     """
     Coverage test using a permutation test on the energy distance.
 
