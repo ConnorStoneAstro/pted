@@ -52,7 +52,7 @@ def test_pted_torch():
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
     x = torch.randn(100, D)
-    t, p = pted.pted(x, x, return_all=True)
+    t, p, _ = pted.pted(x, x, return_all=True)
     q = 2 * min(np.sum(p > t), np.sum(p < t))
     p = (1 + q) / (len(p) + 1)  # add one to numerator and denominator to avoid p=0
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
@@ -64,7 +64,7 @@ def test_pted_coverage_full():
         size=(200, 100, 10)
     )  # posterior samples (n_samples, n_simulations, n_dimensions)
 
-    test, permute = pted.pted_coverage_test(g, s, permutations=100, return_all=True)
+    test, permute, _ = pted.pted_coverage_test(g, s, permutations=100, return_all=True)
     assert test.shape == (100,)
     assert permute.shape == (100, 100)
 
