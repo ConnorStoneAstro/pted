@@ -7,9 +7,11 @@
 [![codecov](https://codecov.io/gh/ConnorStoneAstro/pted/graph/badge.svg?token=5LISJ5BN17)](https://codecov.io/gh/ConnorStoneAstro/pted)
 [![DOI](https://zenodo.org/badge/966938845.svg)](https://doi.org/10.5281/zenodo.15353928)
 
-Think of it like a multi-dimensional KS-test! It is used for two sample testing
-and posterior coverage tests. In some cases it is even more sensitive than the
-KS-test, but likely not all cases.
+PTED (pronounced "ted") takes in `x` and `y` two datasets and determines if they
+were sampled from the same underlying distribution. It produces a p-value under
+the null hypothesis that they are sampled from the same distribution. The
+samples may be multi-dimensional, and the p-value is "exact" meaning it has a
+correctly calibrated type I error rate regardless of the data distribution.
 
 ![pted logo](media/pted_logo.png)
 
@@ -33,8 +35,10 @@ information about each argument, just use ``help(pted.pted)`` or
 
 ## What does PTED do?
 
-PTED (pronounced "ted") takes in `x` and `y` two datasets and determines if they
-come from the same underlying distribution. 
+You can think of it like a multi-dimensional KS-test! Although it works entirely
+differently from the KS-test, this gives you some idea of how useful it is! It
+is used for two sample testing and posterior coverage tests. In some cases it is
+even more sensitive than the KS-test, but likely not all cases.
 
 PTED is useful for:
 
