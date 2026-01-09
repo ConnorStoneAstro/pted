@@ -44,10 +44,10 @@ PTED is useful for:
 
 * "were these two samples drawn from the same distribution?" this works even with noise, so long as the noise distribution is also the same for each sample
 * Evaluate the coverage of a posterior sampling procedure
-* Check for MCMC chain convergence. Split the chain in half or take two chains, that's two samples, if the chain is well mixed then these ought to be drawn from the same distribution
-* Evaluate the performance of a generative model. PTED is powerful here as it can detect overfitting to the training sample.
+* Check for MCMC chain convergence. Split the chain in half or take two chains, that's two samples that PTED can work with (PTED assumes samples are independent, make sure to thin your chain accordingly!)
+* Evaluate the performance of a generative model. PTED is powerful here as it can detect overfitting to the training sample (ensure `two_tailed = True` to check this).
 * Evaluate if a simulator generates true "data-like" samples
-* PTED can be a distance metric for Approximate Bayesian Computing posteriors
+* PTED (or just the energy distance) can be a distance metric for Approximate Bayesian Computing posteriors
 * Check for drift in a time series, comparing samples before/after some cutoff time
 
 And much more!
@@ -77,6 +77,8 @@ s = np.random.normal(size = (200, 100, 10)) # posterior samples (n_samples, n_si
 p_value = pted_coverage_test(g, s)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
+
+Alternately, if you draw a single posterior sample for each ground truth sample, you can just run the two-sample-test since posterior samples ought to be drawn from the same distribution as the prior.
 
 ## How it works
 
@@ -128,18 +130,23 @@ greater than the current one.
 ### Coverage test
 
 In the coverage test we have some number of simulations `nsim` where there is a
-true value `g` and some posterior samples `s`. For each simulation separately we
-use PTED to compute a p-value, essentially asking the question "was `g` drawn
-from the distribution that generated `s`?". Individually, these tests are not
-especially informative, however their p-values must have been drawn from
-`U(0,1)` under the null-hypothesis. Thus we just need a way to combine their
-statistical power. It turns out that for some `p ~ U(0,1)` value, we have that
-`- 2 ln(p)` is chi2 distributed with `dof = 2`. This means that we can sum the
-chi2 values for the PTED test on each simulation and compare with a chi2
-distribution with `dof = 2 * nsim`. We use a density based two tailed p-value
-test on this chi2 distribution meaning that if your posterior is underconfident
-or overconfident, you will get a small p-value that can be used to reject the
-null.
+true value `g` and some posterior samples `s`. The procedure goes like this,
+first you sample from your prior: `g ~ Prior(g)`. The you sample from your
+likelihood: `x ~ Likelihood(x | g)`. Then you sample from your posterior: 
+`s ~ Posterior(s | x)`, you will want many samples `s`. You repeat this 
+procedure `nsim` times. The `g` and `s` samples are what you need for the test.
+
+Internally, for each simulation separately we use PTED to compute a p-value,
+essentially asking the question "was `g` drawn from the distribution that
+generated `s`?". Individually, these tests are not especially informative,
+however their p-values must have been drawn from `U(0,1)` under the
+null-hypothesis^[1]. Thus we just need a way to combine their statistical power. It
+turns out that for some `p ~ U(0,1)` value, we have that `- 2 ln(p)` is chi2
+distributed with `dof = 2`. This means that we can sum the chi2 values for the
+PTED test on each simulation and compare with a chi2 distribution with `dof = 2
+* nsim`. We use a density based two tailed p-value test on this chi2
+distribution meaning that if your posterior is underconfident or overconfident,
+you will get a small p-value that can be used to reject the null.
 
 ## Example: Sensitivity comparison with KS-test
 
@@ -231,10 +238,39 @@ powerful. As such, by default the PTED coverage test will warn users as to which
 kind of failure mode they are in if the `warn_confidence` parameter is not
 `None` (default is 1e-3).
 
+### Necessary but not Sufficient
+
+PTED is a null hypothesis test. This means we assume the null hypothesis is true
+and compute a probability for how likely we are to have a pair of datasets with
+a certain energy distance. If PTED gives a very low p-value then it is probably
+safe to reject that null hypothesis (at the significance given by the p-value).
+However, if the p-value is high and you cannot reject the null, then that does
+not mean the two samples were drawn from the same distribution! Merely that PTED
+could not find any significant discrepancies. The samples could have been drawn
+from the same distribution, or PTED could be insensitive to the deviation, or
+maybe you didn't give it enough samples. In some sense PTED (like all null
+hypothesis tests) is "necessary but not sufficient" in that failing the test is
+bad news for the null, but passing the test is possibly inconclusive. Use your
+judgement, and contact me or some smarter stat-oriented person if you are unsure
+about the results you are getting!
+
 ## GPU Compatibility
 
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
 PyTorch Tensors on the appropriate device.
+
+## Memory and Compute limitations
+
+If a GPU isn't enough to get PTED running fast enough for you, or if you are
+running into memory limitations, there are still options! We can use an
+approximation of the energy distance, in this case the test is still exact but
+less sensitive than it would be otherwise. We can approximate the energy
+distance by taking random subsamples (chunks) of the full dataset, computing the
+energy distance, then averaging. Just set the `chunk_size` parameter for the
+number of samples you can manage at once and set the `chunk_iter` for the number
+of trials you want in the average. The larger these numbers are, the closer the
+estimate will be to the true energy distance, but it will take more compute.
+This lets you decide how to trade off compute for sensitivity.
 
 ## Citation
 
@@ -285,3 +321,12 @@ page](https://en.wikipedia.org/wiki/Permutation_test), and the more general
 [scipy
 implementation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.permutation_test.html),
 and other [python implementations](https://github.com/qbarthelemy/PyPermut)
+
+As for the posterior coverage testing, this is also an established technique.
+See the references below for the nitty gritty details and to search further look for "Simulation-Based Calibration".
+
+cook gelman and rubin
+
+talts et al.
+
+[1] Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
