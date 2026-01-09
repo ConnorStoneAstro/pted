@@ -43,11 +43,11 @@ even more sensitive than the KS-test, but likely not all cases.
 PTED is useful for:
 
 * "were these two samples drawn from the same distribution?" this works even with noise, so long as the noise distribution is also the same for each sample
-* Evaluate the coverage of a posterior sampling procedure
-* Check for MCMC chain convergence. Split the chain in half or take two chains, that's two samples, if the chain is well mixed then these ought to be drawn from the same distribution
-* Evaluate the performance of a generative model. PTED is powerful here as it can detect overfitting to the training sample.
+* Evaluate the coverage of a posterior sampling procedure, and check over/under-confidence
+* Check for MCMC chain convergence. Split the chain in half or take two chains, that's two samples that PTED can work with (PTED assumes samples are independent, make sure to thin your chain accordingly!)
+* Evaluate the performance of a generative ML model. PTED is powerful here as it can detect overfitting to the training sample (ensure `two_tailed = True` to check this).
 * Evaluate if a simulator generates true "data-like" samples
-* PTED can be a distance metric for Approximate Bayesian Computing posteriors
+* PTED (or just the energy distance) can be a distance metric for Approximate Bayesian Computing posteriors
 * Check for drift in a time series, comparing samples before/after some cutoff time
 
 And much more!
@@ -77,6 +77,8 @@ s = np.random.normal(size = (200, 100, 10)) # posterior samples (n_samples, n_si
 p_value = pted_coverage_test(g, s)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
+
+Note, you can also provide a filename via a parameter: `sbc_histogram = "sbc_hist.pdf"` and this will generate an SBC histogram from the test[^1].
 
 ## How it works
 
@@ -128,14 +130,20 @@ greater than the current one.
 ### Coverage test
 
 In the coverage test we have some number of simulations `nsim` where there is a
-true value `g` and some posterior samples `s`. For each simulation separately we
-use PTED to compute a p-value, essentially asking the question "was `g` drawn
-from the distribution that generated `s`?". Individually, these tests are not
-especially informative, however their p-values must have been drawn from
-`U(0,1)` under the null-hypothesis. Thus we just need a way to combine their
-statistical power. It turns out that for some `p ~ U(0,1)` value, we have that
-`- 2 ln(p)` is chi2 distributed with `dof = 2`. This means that we can sum the
-chi2 values for the PTED test on each simulation and compare with a chi2
+true value `g` and some posterior samples `s`. The procedure goes like this,
+first you sample from your prior: `g ~ Prior(G)`. Then you sample from your
+likelihood: `x ~ Likelihood(X | g)`. Then you sample from your posterior: 
+`s ~ Posterior(S | x)`, you will want many samples `s`. You repeat this 
+procedure `nsim` times. The `g` and `s` samples are what you need for the test.
+
+Internally, for each simulation separately we use PTED to compute a p-value,
+essentially asking the question "was `g` drawn from the distribution that
+generated `s`?". Individually, these tests are possibly not especially
+informative (unless the sampler is really bad), however their p-values must have
+been drawn from `U(0,1)` under the null-hypothesis[^2]. Thus we just need a way
+to combine their statistical power. It turns out that for some `p ~ U(0,1)`, we
+have that `- 2 ln(p)` is chi2 distributed with `dof = 2`. This means that we can
+sum the chi2 values for the PTED test on each simulation and compare with a chi2
 distribution with `dof = 2 * nsim`. We use a density based two tailed p-value
 test on this chi2 distribution meaning that if your posterior is underconfident
 or overconfident, you will get a small p-value that can be used to reject the
@@ -225,16 +233,123 @@ can occur in two main ways, one is by having a too narrow posterior. This could
 occur if the measurement uncertainty estimates were too low or there were
 sources of error not accounted for in the model. Another way is if your
 posterior is biased, you may have an appropriately broad posterior, but it is in
-the wrong part of your parameter space. PTED has no way to distinguish these
-modes of overconfidence, however just knowing under/over-confidence can be
+the wrong part of your parameter space. PTED has no way to distinguish these or
+other modes of overconfidence, however just knowing under/over-confidence can be
 powerful. As such, by default the PTED coverage test will warn users as to which
 kind of failure mode they are in if the `warn_confidence` parameter is not
 `None` (default is 1e-3).
+
+### Necessary but not Sufficient
+
+PTED is a null hypothesis test. This means we assume the null hypothesis is true
+and compute a probability for how likely we are to have a pair of datasets with
+a certain energy distance. If PTED gives a very low p-value then it is probably
+safe to reject that null hypothesis (at the significance given by the p-value).
+However, if the p-value is high and you cannot reject the null, then that does
+not mean the two samples were drawn from the same distribution! Merely that PTED
+could not find any significant discrepancies. The samples could have been drawn
+from the same distribution, or PTED could be insensitive to the deviation, or
+maybe the test needs more samples. In some sense PTED (like all null hypothesis
+tests) is "necessary but not sufficient" in that failing the test is bad news
+for the null, but passing the test is possibly inconclusive[^3]. Use your judgement,
+and contact me or some smarter stat-oriented person if you are unsure about the
+results you are getting!
+
+## Arguments
+
+### Two Sample Test
+
+```python
+def pted(
+    x: Union[np.ndarray, "Tensor"],
+    y: Union[np.ndarray, "Tensor"],
+    permutations: int = 1000,
+    metric: Union[str, float] = "euclidean",
+    return_all: bool = False,
+    chunk_size: Optional[int] = None,
+    chunk_iter: Optional[int] = None,
+    two_tailed: bool = True,
+) -> Union[float, tuple[float, np.ndarray, float]]:
+```
+
+* **x** *(Union[np.ndarray, Tensor])*: first set of samples. Shape (N, *D)
+* **y** *(Union[np.ndarray, Tensor])*: second set of samples. Shape (M, *D)
+* **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
+* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf.
+* **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
+* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
+* **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
+* **two_tailed** *(bool)*: if True, compute a two-tailed p-value. This is useful if you want to reject the null hypothesis when x and y are either too similar or too different. If False, only checks for dissimilarity but is more sensitive. Default is True.
+
+### Coverage test
+
+```python
+def pted_coverage_test(
+    g: Union[np.ndarray, "Tensor"],
+    s: Union[np.ndarray, "Tensor"],
+    permutations: int = 1000,
+    metric: Union[str, float] = "euclidean",
+    warn_confidence: Optional[float] = 1e-3,
+    return_all: bool = False,
+    chunk_size: Optional[int] = None,
+    chunk_iter: Optional[int] = None,
+) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
+```
+
+* **g** *(Union[np.ndarray, Tensor])*: Ground truth samples. Shape (n_sims, *D)
+* **s** *(Union[np.ndarray, Tensor])*: Posterior samples. Shape (n_samples, n_sims, *D)
+* **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
+* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf.
+* **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
+* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
+* **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
 
 ## GPU Compatibility
 
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
 PyTorch Tensors on the appropriate device.
+
+Example:
+```python
+from pted import pted
+import numpy as np
+import torch
+
+x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
+y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
+
+p_value = pted(torch.tensor(x), torch.tensor(y))
+print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
+```
+
+## Memory and Compute limitations
+
+If a GPU isn't enough to get PTED running fast enough for you, or if you are
+running into memory limitations, there are still options! We can use an
+approximation of the energy distance, in this case the test is still exact but
+less sensitive than it would be otherwise. We can approximate the energy
+distance by taking random subsamples (chunks) of the full dataset, computing the
+energy distance, then averaging. Just set the `chunk_size` parameter for the
+number of samples you can manage at once and set the `chunk_iter` for the number
+of trials you want in the average. The larger these numbers are, the closer the
+estimate will be to the true energy distance, but it will take more compute.
+This lets you decide how to trade off compute for sensitivity.
+
+Note that the computational complexity for standard PTED goes as 
+`O((n_samp_x + n_samp_y)^2)` while the chunked version goes as 
+`O(chunk_iter * (2 * chunk_size)^2)` so plan your chunking accordingly.
+
+Example:
+```python
+from pted import pted
+import numpy as np
+
+x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
+y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
+
+p_value = pted(x, y, chunk_size = 50, chunk_iter = 100)
+print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
+```
 
 ## Citation
 
@@ -248,14 +363,14 @@ I didn't invent this test, I just think its neat. Here is a paper on the subject
 
 ```
 @article{szekely2004testing,
-  title={Testing for equal distributions in high dimension},
-  author={Sz{\'e}kely, G{\'a}bor J and Rizzo, Maria L and others},
-  journal={InterStat},
-  volume={5},
-  number={16.10},
-  pages={1249--1272},
-  year={2004},
-  publisher={Citeseer}
+      title = {Testing for equal distributions in high dimension},
+     author = {Sz{\'e}kely, G{\'a}bor J and Rizzo, Maria L and others},
+    journal = {InterStat},
+     volume = {5},
+     number = {16.10},
+      pages = {1249--1272},
+       year = {2004},
+  publisher = {Citeseer}
 }
 ```
 
@@ -285,3 +400,62 @@ page](https://en.wikipedia.org/wiki/Permutation_test), and the more general
 [scipy
 implementation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.permutation_test.html),
 and other [python implementations](https://github.com/qbarthelemy/PyPermut)
+
+As for the posterior coverage testing, this is also an established technique.
+See the references below for the nitty gritty details and to search further look for "Simulation-Based Calibration".
+
+```
+@article{Cook2006,
+     title = {Validation of Software for Bayesian Models Using Posterior Quantiles},
+    author = {Samantha R. Cook and Andrew Gelman and Donald B. Rubin},
+   journal = {Journal of Computational and Graphical Statistics},
+      year = {2006}
+ publisher = {[American Statistical Association, Taylor & Francis, Ltd., Institute of Mathematical Statistics, Interface Foundation of America]},
+       URL = {http://www.jstor.org/stable/27594203},
+   urldate = {2026-01-09},
+    number = {3},
+    volume = {15},
+     pages = {675--692},
+      ISSN = {10618600},
+}
+```
+
+```
+@ARTICLE{Talts2018,
+       author = {{Talts}, Sean and {Betancourt}, Michael and {Simpson}, Daniel and {Vehtari}, Aki and {Gelman}, Andrew},
+        title = "{Validating Bayesian Inference Algorithms with Simulation-Based Calibration}",
+      journal = {arXiv e-prints},
+     keywords = {Statistics - Methodology},
+         year = 2018,
+        month = apr,
+          eid = {arXiv:1804.06788},
+        pages = {arXiv:1804.06788},
+          doi = {10.48550/arXiv.1804.06788},
+archivePrefix = {arXiv},
+       eprint = {1804.06788},
+ primaryClass = {stat.ME},
+}
+```
+
+If you think those are neat, then you'll probably also like this paper, which uses HDP regions and a KS-test. It has the same feel as PTED but works differently, so the two are complimentary.
+
+```
+@article{Harrison2015,
+  author = {Harrison, Diana and Sutton, David and Carvalho, Pedro and Hobson, Michael},
+   title = {Validation of Bayesian posterior distributions using a multidimensional Kolmogorov–Smirnov test},
+ journal = {Monthly Notices of the Royal Astronomical Society},
+  volume = {451},
+  number = {3},
+   pages = {2610-2624},
+    year = {2015},
+   month = {06},
+    issn = {0035-8711},
+     doi = {10.1093/mnras/stv1110},
+     url = {https://doi.org/10.1093/mnras/stv1110},
+  eprint = {https://academic.oup.com/mnras/article-pdf/451/3/2610/4011597/stv1110.pdf},
+}
+```
+
+[^1]: See the Simulation-Based Calibration paper by Talts et al. 2018 for what "SBC" is.
+[^2]: Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
+[^3]: actual "necessary but not sufficient" conditions are a different thing than null hypothesis tests, but they have a similar intuitive meaning.
