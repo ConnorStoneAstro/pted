@@ -251,9 +251,58 @@ could not find any significant discrepancies. The samples could have been drawn
 from the same distribution, or PTED could be insensitive to the deviation, or
 maybe the test needs more samples. In some sense PTED (like all null hypothesis
 tests) is "necessary but not sufficient" in that failing the test is bad news
-for the null, but passing the test is possibly inconclusive. Use your judgement,
+for the null, but passing the test is possibly inconclusive[^3]. Use your judgement,
 and contact me or some smarter stat-oriented person if you are unsure about the
 results you are getting!
+
+## Arguments
+
+### Two Sample Test
+
+```python
+def pted(
+    x: Union[np.ndarray, "Tensor"],
+    y: Union[np.ndarray, "Tensor"],
+    permutations: int = 1000,
+    metric: Union[str, float] = "euclidean",
+    return_all: bool = False,
+    chunk_size: Optional[int] = None,
+    chunk_iter: Optional[int] = None,
+    two_tailed: bool = True,
+) -> Union[float, tuple[float, np.ndarray, float]]:
+```
+
+* **x** *(Union[np.ndarray, Tensor])*: first set of samples. Shape (N, *D)
+* **y** *(Union[np.ndarray, Tensor])*: second set of samples. Shape (M, *D)
+* **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
+* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf.
+* **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
+* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
+* **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
+* **two_tailed** *(bool)*: if True, compute a two-tailed p-value. This is useful if you want to reject the null hypothesis when x and y are either too similar or too different. If False, only checks for dissimilarity but is more sensitive. Default is True.
+
+### Coverage test
+
+```python
+def pted_coverage_test(
+    g: Union[np.ndarray, "Tensor"],
+    s: Union[np.ndarray, "Tensor"],
+    permutations: int = 1000,
+    metric: Union[str, float] = "euclidean",
+    warn_confidence: Optional[float] = 1e-3,
+    return_all: bool = False,
+    chunk_size: Optional[int] = None,
+    chunk_iter: Optional[int] = None,
+) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
+```
+
+* **g** *(Union[np.ndarray, Tensor])*: Ground truth samples. Shape (n_sims, *D)
+* **s** *(Union[np.ndarray, Tensor])*: Posterior samples. Shape (n_samples, n_sims, *D)
+* **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
+* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf.
+* **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
+* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
+* **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
 
 ## GPU Compatibility
 
@@ -409,3 +458,4 @@ If you think those are neat, then you'll probably also like this paper, which us
 
 [^1]: See the Simulation-Based Calibration paper by Talts et al. 2018 for what "SBC" is.
 [^2]: Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
+[^3]: actual "necessary but not sufficient" conditions are a different thing than null hypothesis tests, but they have a similar intuitive meaning.
