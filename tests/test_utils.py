@@ -1,6 +1,8 @@
+import sys, os
+
 import numpy as np
 
-from pted.utils import two_tailed_p
+from pted.utils import two_tailed_p, simulation_based_calibration_histogram
 
 import pytest
 
@@ -18,3 +20,15 @@ def test_two_tailed_p():
 
     with pytest.raises(AssertionError):
         two_tailed_p(4, 2)
+
+
+def test_sbc_histogram(monkeypatch):
+
+    ranks = np.random.uniform(size=1000)
+    simulation_based_calibration_histogram(ranks, "sbc_hist.pdf", bins=10)
+    os.remove("sbc_hist.pdf")
+
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)
+
+    with pytest.warns():
+        simulation_based_calibration_histogram(ranks, "sbc_hist.pdf", bins=10)

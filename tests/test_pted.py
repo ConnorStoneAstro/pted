@@ -1,3 +1,5 @@
+import os
+
 import pted
 
 try:
@@ -119,3 +121,11 @@ def test_pted_coverage_overunder():
         pted.pted_coverage_test(g, s * 0.5)
     with pytest.warns(pted.utils.UnderconfidenceWarning):
         pted.pted_coverage_test(g, s * 2)
+
+
+def test_sbc_histogram():
+    g = np.random.normal(size=(100, 10))  # ground truth (nsim, ndim)
+    s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
+
+    pted.pted_coverage_test(g, s, permutations=100, sbc_histogram="sbc_hist.pdf")
+    os.remove("sbc_hist.pdf")

@@ -3,7 +3,7 @@ from warnings import warn
 
 import numpy as np
 from scipy.spatial.distance import cdist
-from scipy.stats import chi2 as chi2_dist
+from scipy.stats import chi2 as chi2_dist, binom
 from scipy.optimize import root_scalar
 
 try:
@@ -23,6 +23,7 @@ __all__ = (
     "pted_chunk_torch",
     "two_tailed_p",
     "confidence_alert",
+    "simulation_based_calibration_histogram",
 )
 
 
@@ -258,3 +259,35 @@ def confidence_alert(chi2, df, level):
                 f"Chi^2 of {chi2:.2e} for degrees of freedom {df} indicates overconfidence (right tail p-value {right_tail:.2e} < {level:.2e})."
             )
         )
+
+
+def simulation_based_calibration_histogram(ranks, saveto, bins=None):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        warn("No SBC histogram generated! Please install matplotlib.")
+        return
+
+    if bins is None:
+        bins = max(5, int(np.sqrt(len(ranks))))
+
+    hist, bins = np.histogram(ranks, range=(0, 1), bins=bins)
+    plt.bar(
+        bins[:-1],
+        hist,
+        width=np.diff(bins),
+        align="edge",
+        facecolor="#A34F4F",
+        edgecolor="#7F0606",
+    )
+    q = binom.ppf([0.16, 0.5, 0.84], len(ranks), 1 / len(bins))
+    plt.axhline(q[1], color="k", alpha=0.5)
+    plt.fill_between(
+        [bins[0], bins[-1]], [q[0], q[0]], [q[2], q[2]], color="grey", linewidth=0, alpha=0.5
+    )
+    plt.xlabel("Rank")
+    plt.ylabel("Count")
+    plt.xlim([bins[0], bins[-1]])
+    plt.title("Simulation-Based-Calibration Histogram")
+    plt.savefig(saveto, bbox_inches="tight")
+    plt.close()

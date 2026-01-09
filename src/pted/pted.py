@@ -9,6 +9,7 @@ from .utils import (
     pted_chunk_numpy,
     two_tailed_p,
     confidence_alert,
+    simulation_based_calibration_histogram,
 )
 
 __all__ = ["pted", "pted_coverage_test"]
@@ -170,6 +171,8 @@ def pted_coverage_test(
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
+    sbc_histogram: Optional[str] = None,
+    sbc_bins: Optional[int] = None,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
     """
     Coverage test using a permutation test on the energy distance.
@@ -234,6 +237,10 @@ def pted_coverage_test(
             dataset.
         chunk_iter (Optional[int]): The chunk iter is the number of iterations
             to use with the given chunk size.
+        sbc_histogram (Optional[str]): If given, the path/filename to save a
+            Simulation-Based-Calibration histogram.
+        sbc_bins (Optional[int]): If given, force the histogram to have the provided
+            number of bins. Otherwise, select an appropriate size: ~sqrt(N).
 
     Note
     ----
@@ -279,11 +286,16 @@ def pted_coverage_test(
         test_stats.append(test)
         permute_stats.append(permute)
         pvals.append(p)
-    test_stats = np.array(test_stats)
-    permute_stats = np.stack(permute_stats)
+    test_stats = np.array(test_stats)  # (nsim,)
+    permute_stats = np.stack(permute_stats)  # (nsim, npermute)
     pvals = np.array(pvals)
 
-    # Compute p-values
+    # Simulation-Based-Calibration histogram
+    if sbc_histogram is not None:
+        ranks = np.sum(test_stats[:, None] >= permute_stats, axis=1) / permutations
+        simulation_based_calibration_histogram(ranks, sbc_histogram, bins=sbc_bins)
+
+    # Compute p-value
     if nsim == 1:
         return pvals[0]
     chi2 = np.sum(-2 * np.log(pvals))
