@@ -26,10 +26,7 @@ def test_sbc_histogram(monkeypatch):
 
     ranks = np.random.uniform(size=1000)
     simulation_based_calibration_histogram(ranks, "sbc_hist.pdf", bins=10)
-    try:
-        os.remove("sbc_hist.pdf")
-    except:
-        pass
+    os.remove("sbc_hist.pdf")
 
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)
 

@@ -128,7 +128,4 @@ def test_sbc_histogram():
     s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
 
     pted.pted_coverage_test(g, s, permutations=100, sbc_histogram="sbc_hist.pdf")
-    try:
-        os.remove("sbc_hist.pdf")
-    except:
-        pass
+    os.remove("sbc_hist.pdf")
