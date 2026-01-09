@@ -74,7 +74,7 @@ def pted(
         y (Union[np.ndarray, Tensor]): second set of samples. Shape (M, *D)
         permutations (int): number of permutations to run. This determines how
             accurately the p-value is computed.
-        metric (str): distance metric to use. See scipy.spatial.distance.cdist
+        metric (Union[str, float]): distance metric to use. See scipy.spatial.distance.cdist
             for the list of available metrics with numpy. See torch.cdist when
             using PyTorch, note that the metric is passed as the "p" for
             torch.cdist and therefore is a float from 0 to inf.
@@ -166,7 +166,7 @@ def pted_coverage_test(
     g: Union[np.ndarray, "Tensor"],
     s: Union[np.ndarray, "Tensor"],
     permutations: int = 1000,
-    metric: str = "euclidean",
+    metric: Union[str, float] = "euclidean",
     warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
     chunk_size: Optional[int] = None,
@@ -224,7 +224,7 @@ def pted_coverage_test(
         s (Union[np.ndarray, Tensor]): Posterior samples. Shape (n_samples, n_sims, *D)
         permutations (int): number of permutations to run. This determines how
             accurately the p-value is computed.
-        metric (str): distance metric to use. See scipy.spatial.distance.cdist
+        metric (Union[str, float]): distance metric to use. See scipy.spatial.distance.cdist
             for the list of available metrics with numpy. See torch.cdist when using
             PyTorch, note that the metric is passed as the "p" for torch.cdist and
             therefore is a float from 0 to inf.
