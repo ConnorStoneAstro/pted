@@ -293,6 +293,8 @@ def pted_coverage_test(
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
+    sbc_histogram: Optional[str] = None,
+    sbc_bins: Optional[int] = None,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
 ```
 
@@ -303,6 +305,8 @@ def pted_coverage_test(
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
 * **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
 * **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
+* **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
+* **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
 
 ## GPU Compatibility
 
