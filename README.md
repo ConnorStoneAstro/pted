@@ -43,9 +43,9 @@ even more sensitive than the KS-test, but likely not all cases.
 PTED is useful for:
 
 * "were these two samples drawn from the same distribution?" this works even with noise, so long as the noise distribution is also the same for each sample
-* Evaluate the coverage of a posterior sampling procedure
+* Evaluate the coverage of a posterior sampling procedure, and check over/under-confidence
 * Check for MCMC chain convergence. Split the chain in half or take two chains, that's two samples that PTED can work with (PTED assumes samples are independent, make sure to thin your chain accordingly!)
-* Evaluate the performance of a generative model. PTED is powerful here as it can detect overfitting to the training sample (ensure `two_tailed = True` to check this).
+* Evaluate the performance of a generative ML model. PTED is powerful here as it can detect overfitting to the training sample (ensure `two_tailed = True` to check this).
 * Evaluate if a simulator generates true "data-like" samples
 * PTED (or just the energy distance) can be a distance metric for Approximate Bayesian Computing posteriors
 * Check for drift in a time series, comparing samples before/after some cutoff time
@@ -78,9 +78,7 @@ p_value = pted_coverage_test(g, s)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
 
-Alternately, if you draw a single posterior sample for each ground truth sample, you can just run the two-sample-test since posterior samples ought to be drawn from the same distribution as the prior.
-
-Note, you can also provide a filename via a parameter: `sbc_histogram = "sbc_hist.pdf"` and this will generate an SBC histogram from the test.
+Note, you can also provide a filename via a parameter: `sbc_histogram = "sbc_hist.pdf"` and this will generate an SBC histogram from the test[^1].
 
 ## How it works
 
@@ -142,7 +140,7 @@ Internally, for each simulation separately we use PTED to compute a p-value,
 essentially asking the question "was `g` drawn from the distribution that
 generated `s`?". Individually, these tests are possibly not especially
 informative (unless the sampler is really bad), however their p-values must have
-been drawn from `U(0,1)` under the null-hypothesis[^1]. Thus we just need a way
+been drawn from `U(0,1)` under the null-hypothesis[^2]. Thus we just need a way
 to combine their statistical power. It turns out that for some `p ~ U(0,1)`, we
 have that `- 2 ln(p)` is chi2 distributed with `dof = 2`. This means that we can
 sum the chi2 values for the PTED test on each simulation and compare with a chi2
@@ -262,6 +260,19 @@ results you are getting!
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
 PyTorch Tensors on the appropriate device.
 
+Example:
+```python
+from pted import pted
+import numpy as np
+import torch
+
+x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
+y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
+
+p_value = pted(torch.tensor(x), torch.tensor(y))
+print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
+```
+
 ## Memory and Compute limitations
 
 If a GPU isn't enough to get PTED running fast enough for you, or if you are
@@ -274,6 +285,22 @@ number of samples you can manage at once and set the `chunk_iter` for the number
 of trials you want in the average. The larger these numbers are, the closer the
 estimate will be to the true energy distance, but it will take more compute.
 This lets you decide how to trade off compute for sensitivity.
+
+Note that the computational complexity for standard PTED goes as 
+`O((n_samp_x + n_samp_y)^2)` while the chunked version goes as 
+`O(chunk_iter * (2 * chunk_size)^2)` so plan your chunking accordingly.
+
+Example:
+```python
+from pted import pted
+import numpy as np
+
+x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
+y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
+
+p_value = pted(x, y, chunk_size = 50, chunk_iter = 100)
+print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
+```
 
 ## Citation
 
@@ -380,4 +407,5 @@ If you think those are neat, then you'll probably also like this paper, which us
 }
 ```
 
-[^1]: Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
+[^1]: See the Simulation-Based Calibration paper by Talts et al. 2018 for what "SBC" is.
+[^2]: Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
