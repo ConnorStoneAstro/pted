@@ -269,6 +269,7 @@ def pted(
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
     two_tailed: bool = True,
+    prog_bar: bool = False,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
 ```
 
@@ -280,6 +281,7 @@ def pted(
 * **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
 * **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
 * **two_tailed** *(bool)*: if True, compute a two-tailed p-value. This is useful if you want to reject the null hypothesis when x and y are either too similar or too different. If False, only checks for dissimilarity but is more sensitive. Default is True.
+* **prog_bar** *(bool)*: if True, show a progress bar to track the progress of permutation tests. Default is False.
 
 ### Coverage test
 
@@ -295,6 +297,7 @@ def pted_coverage_test(
     chunk_iter: Optional[int] = None,
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
+    prog_bar: bool = False,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
 ```
 
@@ -307,6 +310,7 @@ def pted_coverage_test(
 * **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
+* **prog_bar** *(bool)*: if True, show a progress bar to track the progress of permutation tests. Default is False.
 
 ## GPU Compatibility
 

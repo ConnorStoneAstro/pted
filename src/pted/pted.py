@@ -24,6 +24,7 @@ def pted(
     chunk_size: Optional[int] = None,
     chunk_iter: Optional[int] = None,
     two_tailed: bool = True,
+    prog_bar: bool = False,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
     """
     Two sample null hypothesis test using a permutation test on the energy
@@ -90,6 +91,9 @@ def pted(
         two_tailed (bool): if True, compute a two-tailed p-value. This is useful
             if you want to reject the null hypothesis when x and y are either
             too similar or too different. Default is True.
+        prog_bar (bool): if True, show a progress bar to track the progress
+            of permutation tests. Default is False.
+
 
     Note
     ----
@@ -131,9 +135,10 @@ def pted(
             metric=metric,
             chunk_size=int(chunk_size),
             chunk_iter=int(chunk_iter),
+            prog_bar=prog_bar,
         )
     elif is_torch_tensor(x):
-        test, permute = pted_torch(x, y, permutations=permutations, metric=metric)
+        test, permute = pted_torch(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
     elif chunk_size is not None:
         test, permute = pted_chunk_numpy(
             x,
@@ -142,9 +147,10 @@ def pted(
             metric=metric,
             chunk_size=int(chunk_size),
             chunk_iter=int(chunk_iter),
+            prog_bar=prog_bar,
         )
     else:
-        test, permute = pted_numpy(x, y, permutations=permutations, metric=metric)
+        test, permute = pted_numpy(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
 
     permute = np.array(permute)
 
@@ -173,6 +179,7 @@ def pted_coverage_test(
     chunk_iter: Optional[int] = None,
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
+    prog_bar: bool = False,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
     """
     Coverage test using a permutation test on the energy distance.
@@ -231,7 +238,7 @@ def pted_coverage_test(
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value. bool
             (default: False)
-        chunk_size (Optional[int]): if not None, use chunked energy distance
+        chunk_size (Optional[int]): If not None, use chunked energy distance
             estimation. This is useful for large datasets. The chunk size is the
             number of samples to use for each chunk. If None, use the full
             dataset.
@@ -241,6 +248,8 @@ def pted_coverage_test(
             Simulation-Based-Calibration histogram.
         sbc_bins (Optional[int]): If given, force the histogram to have the provided
             number of bins. Otherwise, select an appropriate size: ~sqrt(N).
+        prog_bar (bool): If True, show a progress bar to track the progress
+            of permutation tests. Default is False.
 
     Note
     ----
@@ -282,6 +291,7 @@ def pted_coverage_test(
             two_tailed=False,
             chunk_size=chunk_size,
             chunk_iter=chunk_iter,
+            prog_bar=prog_bar,
         )
         test_stats.append(test)
         permute_stats.append(permute)
