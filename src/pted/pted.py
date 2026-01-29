@@ -1,3 +1,4 @@
+from tqdm.auto import trange
 from typing import Union, Optional
 import numpy as np
 
@@ -249,7 +250,7 @@ def pted_coverage_test(
         sbc_bins (Optional[int]): If given, force the histogram to have the provided
             number of bins. Otherwise, select an appropriate size: ~sqrt(N).
         prog_bar (bool): If True, show a progress bar to track the progress
-            of permutation tests. Default is False.
+            of simulations. Default is False.
 
     Note
     ----
@@ -281,7 +282,7 @@ def pted_coverage_test(
     test_stats = []
     permute_stats = []
     pvals = []
-    for i in range(nsim):
+    for i in trange(nsim, disable=not prog_bar):
         test, permute, p = pted(
             g[:, i],
             s[:, i],
@@ -291,7 +292,6 @@ def pted_coverage_test(
             two_tailed=False,
             chunk_size=chunk_size,
             chunk_iter=chunk_iter,
-            prog_bar=prog_bar,
         )
         test_stats.append(test)
         permute_stats.append(permute)

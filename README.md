@@ -310,7 +310,7 @@ def pted_coverage_test(
 * **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
-* **prog_bar** *(bool)*: if True, show a progress bar to track the progress of permutation tests. Default is False.
+* **prog_bar** *(bool)*: if True, show a progress bar to track the progress of simulations. Default is False.
 
 ## GPU Compatibility
 
