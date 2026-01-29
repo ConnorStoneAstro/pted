@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 from scipy.stats import chi2 as chi2_dist, binom
 from scipy.optimize import root_scalar
+from tqdm.auto import trange
 
 try:
     import torch
@@ -116,13 +117,14 @@ def pted_chunk_numpy(
     metric: str = "euclidean",
     chunk_size: int = 100,
     chunk_iter: int = 10,
+    prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     assert np.all(np.isfinite(x)) and np.all(np.isfinite(y)), "Input contains NaN or Inf!"
     nx = len(x)
 
     test_stat = _energy_distance_estimate_numpy(x, y, chunk_size, chunk_iter, metric=metric)
     permute_stats = []
-    for _ in range(permutations):
+    for _ in trange(permutations, disable=not prog_bar):
         z = np.concatenate((x, y), axis=0)
         z = z[np.random.permutation(len(z))]
         x, y = z[:nx], z[nx:]
@@ -139,6 +141,7 @@ def pted_chunk_torch(
     metric: Union[str, float] = "euclidean",
     chunk_size: int = 100,
     chunk_iter: int = 10,
+    prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
     assert torch.all(torch.isfinite(x)) and torch.all(
@@ -148,7 +151,7 @@ def pted_chunk_torch(
 
     test_stat = _energy_distance_estimate_torch(x, y, chunk_size, chunk_iter, metric=metric)
     permute_stats = []
-    for _ in range(permutations):
+    for _ in trange(permutations, disable=not prog_bar):
         z = torch.cat((x, y), dim=0)
         z = z[torch.randperm(len(z))]
         x, y = z[:nx], z[nx:]
@@ -159,7 +162,7 @@ def pted_chunk_torch(
 
 
 def pted_numpy(
-    x: np.ndarray, y: np.ndarray, permutations: int = 100, metric: str = "euclidean"
+    x: np.ndarray, y: np.ndarray, permutations: int = 100, metric: str = "euclidean", prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     z = np.concatenate((x, y), axis=0)
     assert np.all(np.isfinite(z)), "Input contains NaN or Inf!"
@@ -172,7 +175,7 @@ def pted_numpy(
 
     test_stat = _energy_distance_precompute(dmatrix, nx, ny)
     permute_stats = []
-    for _ in range(permutations):
+    for _ in trange(permutations, disable=not prog_bar):
         I = np.random.permutation(len(z))
         dmatrix = dmatrix[I][:, I]
         permute_stats.append(_energy_distance_precompute(dmatrix, nx, ny))
@@ -184,6 +187,7 @@ def pted_torch(
     y: torch.Tensor,
     permutations: int = 100,
     metric: Union[str, float] = "euclidean",
+    prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
     z = torch.cat((x, y), dim=0)
@@ -199,7 +203,7 @@ def pted_torch(
 
     test_stat = _energy_distance_precompute(dmatrix, nx, ny).item()
     permute_stats = []
-    for _ in range(permutations):
+    for _ in trange(permutations, disable=not prog_bar):
         I = torch.randperm(len(z))
         dmatrix = dmatrix[I][:, I]
         permute_stats.append(_energy_distance_precompute(dmatrix, nx, ny).item())

@@ -5,3 +5,4 @@ _build
 build
 **.ipynb_checkpoints
 src/pted/_version.py
+.idea
