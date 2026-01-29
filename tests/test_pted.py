@@ -32,6 +32,16 @@ def test_pted_main():
     pted.test()
 
 
+def test_pted_progress_bar(capsys):
+    pted.pted(np.array([[1,2],[3,4]]), np.array([[3,2],[1,4]]), permutations=42)
+    captured = capsys.readouterr().err
+    assert "42/42" not in captured, "progress bar showed up when prog_bar is set to False by default"
+
+    pted.pted(np.array([[1,2],[3,4]]), np.array([[3,2],[1,4]]), permutations=42, prog_bar=True)
+    captured = capsys.readouterr().err
+    assert "42/42" in captured, "progress bar did not show when prog_bar is set to True"
+
+
 def test_pted_torch():
     if torch is None:
         pytest.skip("torch not installed")
@@ -110,6 +120,18 @@ def test_pted_coverage_edgecase():
     s = np.random.normal(size=(100, 1, 10))
     p = pted.pted_coverage_test(g, s)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
+
+
+def test_pted_coverage_progress_bar(capsys):
+    g = np.random.normal(size=(42, 10))
+    s = np.random.normal(size=(100, 42, 10))
+    pted.pted_coverage_test(g, s)
+    captured = capsys.readouterr().err
+    assert "42/42" not in captured, "progress bar showed up when prog_bar is set to False by default"
+
+    pted.pted_coverage_test(g, s, prog_bar=True)
+    captured = capsys.readouterr().err
+    assert "42/42" in captured, "progress bar did not show when prog_bar is set to True"
 
 
 def test_pted_coverage_overunder():
