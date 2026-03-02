@@ -4,10 +4,13 @@ import numpy as np
 
 from .utils import (
     is_torch_tensor,
+    is_jax_array,
     pted_torch,
     pted_numpy,
     pted_chunk_torch,
     pted_chunk_numpy,
+    pted_jax,
+    pted_chunk_jax,
     two_tailed_p,
     confidence_alert,
     simulation_based_calibration_histogram,
@@ -140,6 +143,18 @@ def pted(
         )
     elif is_torch_tensor(x):
         test, permute = pted_torch(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
+    elif is_jax_array(x) and chunk_size is not None:
+        test, permute = pted_chunk_jax(
+            x,
+            y,
+            permutations=permutations,
+            metric=metric,
+            chunk_size=int(chunk_size),
+            chunk_iter=int(chunk_iter),
+            prog_bar=prog_bar,
+        )
+    elif is_jax_array(x):
+        test, permute = pted_jax(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
     elif chunk_size is not None:
         test, permute = pted_chunk_numpy(
             x,

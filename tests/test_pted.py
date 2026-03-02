@@ -6,6 +6,14 @@ try:
     import torch
 except ImportError:
     torch = None
+
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError:
+    jax = None
+    jnp = None
+
 import numpy as np
 
 import pytest
@@ -151,3 +159,57 @@ def test_sbc_histogram():
 
     pted.pted_coverage_test(g, s, permutations=100, sbc_histogram="sbc_hist.pdf")
     os.remove("sbc_hist.pdf")
+
+
+def test_pted_jax():
+    if jax is None:
+        pytest.skip("jax not installed")
+
+    # Set the random seed for reproducibility
+    np.random.seed(42)
+
+    # example 2 sample test
+    D = 300
+    for _ in range(20):
+        x = jnp.array(np.random.normal(size=(100, D)))
+        y = jnp.array(np.random.normal(size=(100, D)))
+        p = pted.pted(x, y)
+        assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
+
+    x = jnp.array(np.random.normal(size=(100, D)))
+    y = jnp.array(np.random.uniform(size=(100, D)))
+    p = pted.pted(x, y, two_tailed=False)
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
+
+    x = jnp.array(np.random.normal(size=(100, D)))
+    t, p, _ = pted.pted(x, x, return_all=True)
+    q = 2 * min(np.sum(p > t), np.sum(p < t))
+    p = (1 + q) / (len(p) + 1)
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
+
+
+def test_pted_chunk_jax():
+    if jax is None:
+        pytest.skip("jax not installed")
+    np.random.seed(42)
+
+    # example 2 sample test
+    D = 10
+    x = jnp.array(np.random.normal(size=(1000, D)))
+    y = jnp.array(np.random.normal(size=(1000, D)))
+    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
+
+    y = jnp.array(np.random.uniform(size=(1000, D)))
+    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
+
+
+def test_pted_coverage_jax():
+    if jax is None:
+        pytest.skip("jax not installed")
+
+    g = jnp.array(np.random.normal(size=(100, 10)))
+    s = jnp.array(np.random.normal(size=(50, 100, 10)))
+    p = pted.pted_coverage_test(g, s)
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
