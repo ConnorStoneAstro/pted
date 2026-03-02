@@ -1,4 +1,5 @@
 import os
+import types
 
 import pted
 
@@ -213,3 +214,86 @@ def test_pted_coverage_jax():
     s = jnp.array(np.random.normal(size=(50, 100, 10)))
     p = pted.pted_coverage_test(g, s)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for newly-added utils functions
+# ---------------------------------------------------------------------------
+
+
+def test_is_jax_array_with_jax():
+    """is_jax_array returns True for a real JAX array and False for other types."""
+    if jax is None:
+        pytest.skip("jax not installed")
+    assert pted.utils.is_jax_array(jnp.zeros(3)) is True
+    assert pted.utils.is_jax_array(np.zeros(3)) is False
+    assert pted.utils.is_jax_array(42) is False
+
+
+def test_is_jax_array_no_jax(monkeypatch):
+    """is_jax_array returns False when JAX is not installed."""
+    monkeypatch.setattr("pted.utils.jax", None)
+    assert pted.utils.is_jax_array(42) is False
+
+
+def test_jax_cdist():
+    """_jax_cdist produces correct pairwise Euclidean distances."""
+    if jax is None:
+        pytest.skip("jax not installed")
+    x = jnp.array([[0.0, 0.0], [3.0, 4.0]])
+    y = jnp.array([[0.0, 0.0], [1.0, 0.0]])
+    D = pted.utils._jax_cdist(x, y)
+    assert D.shape == (2, 2)
+    assert float(D[0, 1]) == pytest.approx(1.0)
+    assert float(D[1, 0]) == pytest.approx(5.0)
+
+
+def test_energy_distance_jax():
+    """_energy_distance_jax returns 0 when x and y are identical."""
+    if jax is None:
+        pytest.skip("jax not installed")
+    x = jnp.array(np.random.normal(size=(50, 5)))
+    # Identical samples → energy distance should be ~0
+    ed = pted.utils._energy_distance_jax(x, x)
+    assert abs(ed) < 1e-6
+
+
+def test_energy_distance_estimate_jax():
+    """_energy_distance_estimate_jax returns a finite scalar."""
+    if jax is None:
+        pytest.skip("jax not installed")
+    np.random.seed(0)
+    x = jnp.array(np.random.normal(size=(100, 4)))
+    y = jnp.array(np.random.normal(size=(100, 4)))
+    ed = pted.utils._energy_distance_estimate_jax(x, y, chunk_size=20, chunk_iter=5)
+    assert np.isfinite(ed)
+
+
+def test_pted_jax_no_jax(monkeypatch):
+    """pted_jax raises AssertionError when JAX is not installed."""
+    monkeypatch.setattr("pted.utils.jax", None)
+    with pytest.raises(AssertionError, match="JAX is not installed"):
+        pted.utils.pted_jax(np.zeros((5, 2)), np.zeros((5, 2)))
+
+
+def test_pted_chunk_jax_no_jax(monkeypatch):
+    """pted_chunk_jax raises AssertionError when JAX is not installed."""
+    monkeypatch.setattr("pted.utils.jax", None)
+    with pytest.raises(AssertionError, match="JAX is not installed"):
+        pted.utils.pted_chunk_jax(np.zeros((5, 2)), np.zeros((5, 2)))
+
+
+def test_pted_torch_no_torch(monkeypatch):
+    """pted_torch raises AssertionError when torch is not installed."""
+    fake_torch = types.SimpleNamespace(__version__="null")
+    monkeypatch.setattr("pted.utils.torch", fake_torch)
+    with pytest.raises(AssertionError, match="PyTorch is not installed"):
+        pted.utils.pted_torch(np.zeros((5, 2)), np.zeros((5, 2)))
+
+
+def test_pted_chunk_torch_no_torch(monkeypatch):
+    """pted_chunk_torch raises AssertionError when torch is not installed."""
+    fake_torch = types.SimpleNamespace(__version__="null")
+    monkeypatch.setattr("pted.utils.torch", fake_torch)
+    with pytest.raises(AssertionError, match="PyTorch is not installed"):
+        pted.utils.pted_chunk_torch(np.zeros((5, 2)), np.zeros((5, 2)))
