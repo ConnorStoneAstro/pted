@@ -47,6 +47,9 @@ dev = [
 torch = [
     "torch>=2.0,<3",
 ]
+jax = [
+    "jax>=0.4,<1",
+]
 
 [tool.hatch.metadata.hooks.requirements_txt]
 files = ["requirements.txt"]
