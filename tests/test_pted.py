@@ -310,3 +310,82 @@ def test_pted_chunk_torch_no_torch(monkeypatch):
     monkeypatch.setattr("pted.utils.torch", fake_torch)
     with pytest.raises(AssertionError, match="PyTorch is not installed"):
         pted.utils.pted_chunk_torch(np.zeros((5, 2)), np.zeros((5, 2)))
+
+
+# ---------------------------------------------------------------------------
+# Cross-backend consistency tests
+# ---------------------------------------------------------------------------
+
+
+def test_jax_cdist_matches_scipy():
+    """_jax_cdist (L2) and scipy cdist produce the same pairwise distances."""
+    if jax is None:
+        pytest.skip("jax not installed")
+    from scipy.spatial.distance import cdist as scipy_cdist
+
+    np.random.seed(7)
+    x_np = np.random.normal(size=(10, 4)).astype(np.float32)
+    y_np = np.random.normal(size=(8, 4)).astype(np.float32)
+
+    expected = scipy_cdist(x_np, y_np, metric="euclidean")
+    got = np.array(pted.utils._jax_cdist(jnp.array(x_np), jnp.array(y_np)))
+    np.testing.assert_allclose(got, expected, rtol=1e-5)
+
+
+def test_energy_distance_numpy_torch_jax_agree():
+    """_energy_distance_{numpy,torch,jax} return the same value for identical inputs."""
+    if torch is None:
+        pytest.skip("torch not installed")
+    if jax is None:
+        pytest.skip("jax not installed")
+
+    np.random.seed(99)
+    # Use float32 so all backends operate at the same precision
+    # (JAX uses float32 by default)
+    x_np = np.random.normal(size=(30, 5)).astype(np.float32)
+    y_np = np.random.normal(size=(30, 5)).astype(np.float32)
+
+    ed_numpy = pted.utils._energy_distance_numpy(x_np, y_np)
+    ed_torch = pted.utils._energy_distance_torch(
+        torch.tensor(x_np), torch.tensor(y_np)
+    )
+    ed_jax = pted.utils._energy_distance_jax(jnp.array(x_np), jnp.array(y_np))
+
+    assert ed_numpy == pytest.approx(ed_torch, rel=1e-4), (
+        f"numpy ({ed_numpy}) and torch ({ed_torch}) energy distances differ"
+    )
+    assert ed_numpy == pytest.approx(ed_jax, rel=1e-4), (
+        f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distances differ"
+    )
+
+
+def test_energy_distance_estimate_numpy_torch_jax_agree():
+    """_energy_distance_estimate_{numpy,torch,jax} return close values for the same seed/data."""
+    if torch is None:
+        pytest.skip("torch not installed")
+    if jax is None:
+        pytest.skip("jax not installed")
+
+    np.random.seed(123)
+    # Use float32 so all backends operate at the same precision
+    x_np = np.random.normal(size=(200, 5)).astype(np.float32)
+    y_np = np.random.normal(size=(200, 5)).astype(np.float32)
+
+    # Run with the same seed so the same chunks are sampled
+    np.random.seed(0)
+    ed_numpy = pted.utils._energy_distance_estimate_numpy(x_np, y_np, chunk_size=50, chunk_iter=5)
+    np.random.seed(0)
+    ed_torch = pted.utils._energy_distance_estimate_torch(
+        torch.tensor(x_np), torch.tensor(y_np), chunk_size=50, chunk_iter=5
+    )
+    np.random.seed(0)
+    ed_jax = pted.utils._energy_distance_estimate_jax(
+        jnp.array(x_np), jnp.array(y_np), chunk_size=50, chunk_iter=5
+    )
+
+    assert ed_numpy == pytest.approx(ed_torch, rel=1e-4), (
+        f"numpy ({ed_numpy}) and torch ({ed_torch}) energy distance estimates differ"
+    )
+    assert ed_numpy == pytest.approx(ed_jax, rel=1e-4), (
+        f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distance estimates differ"
+    )
