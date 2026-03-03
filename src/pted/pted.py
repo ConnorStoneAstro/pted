@@ -4,10 +4,13 @@ import numpy as np
 
 from .utils import (
     is_torch_tensor,
+    is_jax_array,
     pted_torch,
     pted_numpy,
     pted_chunk_torch,
     pted_chunk_numpy,
+    pted_jax,
+    pted_chunk_jax,
     two_tailed_p,
     confidence_alert,
     simulation_based_calibration_histogram,
@@ -17,8 +20,8 @@ __all__ = ["pted", "pted_coverage_test"]
 
 
 def pted(
-    x: Union[np.ndarray, "Tensor"],
-    y: Union[np.ndarray, "Tensor"],
+    x: Union[np.ndarray, "Tensor", "jax.Array"],
+    y: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
     metric: Union[str, float] = "euclidean",
     return_all: bool = False,
@@ -72,14 +75,17 @@ def pted(
 
     Parameters
     ----------
-        x (Union[np.ndarray, Tensor]): first set of samples. Shape (N, *D)
-        y (Union[np.ndarray, Tensor]): second set of samples. Shape (M, *D)
+        x (Union[np.ndarray, Tensor, jax.Array]): first set of samples. Shape (N, *D)
+        y (Union[np.ndarray, Tensor, jax.Array]): second set of samples. Shape (M, *D)
         permutations (int): number of permutations to run. This determines how
             accurately the p-value is computed.
-        metric (Union[str, float]): distance metric to use. See scipy.spatial.distance.cdist
-            for the list of available metrics with numpy. See torch.cdist when
-            using PyTorch, note that the metric is passed as the "p" for
-            torch.cdist and therefore is a float from 0 to inf.
+        metric (Union[str, float]): distance metric to use. For NumPy inputs,
+            see scipy.spatial.distance.cdist for available metrics. For PyTorch
+            inputs, the metric is passed as the "p" argument to torch.cdist and
+            therefore is a float from 0 to inf. For JAX inputs, "euclidean" uses
+            the squared-norm identity (p=2), and any float p uses
+            jnp.linalg.norm with ord=p; string metrics other than "euclidean"
+            are not supported for JAX.
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value.
             bool (default: False)
@@ -140,6 +146,18 @@ def pted(
         )
     elif is_torch_tensor(x):
         test, permute = pted_torch(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
+    elif is_jax_array(x) and chunk_size is not None:
+        test, permute = pted_chunk_jax(
+            x,
+            y,
+            permutations=permutations,
+            metric=metric,
+            chunk_size=int(chunk_size),
+            chunk_iter=int(chunk_iter),
+            prog_bar=prog_bar,
+        )
+    elif is_jax_array(x):
+        test, permute = pted_jax(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
     elif chunk_size is not None:
         test, permute = pted_chunk_numpy(
             x,
@@ -170,8 +188,8 @@ def pted(
 
 
 def pted_coverage_test(
-    g: Union[np.ndarray, "Tensor"],
-    s: Union[np.ndarray, "Tensor"],
+    g: Union[np.ndarray, "Tensor", "jax.Array"],
+    s: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
     metric: Union[str, float] = "euclidean",
     warn_confidence: Optional[float] = 1e-3,
@@ -228,14 +246,17 @@ def pted_coverage_test(
 
     Parameters
     ----------
-        g (Union[np.ndarray, Tensor]): Ground truth samples. Shape (n_sims, *D)
-        s (Union[np.ndarray, Tensor]): Posterior samples. Shape (n_samples, n_sims, *D)
+        g (Union[np.ndarray, Tensor, jax.Array]): Ground truth samples. Shape (n_sims, *D)
+        s (Union[np.ndarray, Tensor, jax.Array]): Posterior samples. Shape (n_samples, n_sims, *D)
         permutations (int): number of permutations to run. This determines how
             accurately the p-value is computed.
-        metric (Union[str, float]): distance metric to use. See scipy.spatial.distance.cdist
-            for the list of available metrics with numpy. See torch.cdist when using
-            PyTorch, note that the metric is passed as the "p" for torch.cdist and
-            therefore is a float from 0 to inf.
+        metric (Union[str, float]): distance metric to use. For NumPy inputs,
+            see scipy.spatial.distance.cdist for available metrics. For PyTorch
+            inputs, the metric is passed as the "p" argument to torch.cdist and
+            therefore is a float from 0 to inf. For JAX inputs, "euclidean" uses
+            the squared-norm identity (p=2), and any float p uses
+            jnp.linalg.norm with ord=p; string metrics other than "euclidean"
+            are not supported for JAX.
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value. bool
             (default: False)

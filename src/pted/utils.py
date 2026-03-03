@@ -16,12 +16,23 @@ except ImportError:
         Tensor = np.ndarray
 
 
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError:
+    jax = None
+    jnp = None
+
+
 __all__ = (
     "is_torch_tensor",
+    "is_jax_array",
     "pted_numpy",
     "pted_chunk_numpy",
     "pted_torch",
     "pted_chunk_torch",
+    "pted_jax",
+    "pted_chunk_jax",
     "two_tailed_p",
     "confidence_alert",
     "simulation_based_calibration_histogram",
@@ -37,6 +48,12 @@ def is_torch_tensor(o):
         and hasattr(o, "dtype")
         and hasattr(o, "shape")
     )
+
+
+def is_jax_array(o):
+    if jax is None:
+        return False
+    return isinstance(o, jax.Array)
 
 
 def _energy_distance_precompute(
@@ -107,6 +124,49 @@ def _energy_distance_estimate_torch(
 
         # Compute the energy distance
         E_est.append(_energy_distance_torch(x_chunk, y_chunk, metric=metric))
+    return np.mean(E_est)
+
+
+def _jax_cdist(x, y, p: float = 2.0):
+    if p == 2.0:
+        # Squared-norm identity avoids materializing the (nx, ny, d) diff tensor.
+        # ||x_i - y_j||^2 = ||x_i||^2 + ||y_j||^2 - 2 * x_i . y_j
+        x_sq = jnp.sum(x ** 2, axis=-1)  # (nx,)
+        y_sq = jnp.sum(y ** 2, axis=-1)  # (ny,)
+        sq_dist = x_sq[:, None] + y_sq[None, :] - 2.0 * (x @ y.T)
+        return jnp.sqrt(jnp.maximum(sq_dist, 0.0))
+    # For general p-norms use vmap to avoid the (nx, ny, d) intermediate.
+    return jax.vmap(lambda xi: jnp.linalg.norm(xi - y, ord=p, axis=-1))(x)
+
+
+def _energy_distance_jax(x, y, metric: Union[str, float] = "euclidean") -> float:
+    nx = len(x)
+    ny = len(y)
+    z = jnp.concatenate([x, y], axis=0)
+    if metric == "euclidean":
+        metric = 2.0
+    D = _jax_cdist(z, z, p=metric)
+    return float(_energy_distance_precompute(D, nx, ny))
+
+
+def _energy_distance_estimate_jax(
+    x,
+    y,
+    chunk_size: int,
+    chunk_iter: int,
+    metric: Union[str, float] = "euclidean",
+) -> float:
+
+    E_est = []
+    for _ in range(chunk_iter):
+        # Randomly sample a chunk of data
+        idx = np.random.choice(len(x), size=min(len(x), chunk_size), replace=False)
+        x_chunk = x[idx]
+        idy = np.random.choice(len(y), size=min(len(y), chunk_size), replace=False)
+        y_chunk = y[idy]
+
+        # Compute the energy distance
+        E_est.append(_energy_distance_jax(x_chunk, y_chunk, metric=metric))
     return np.mean(E_est)
 
 
@@ -207,6 +267,59 @@ def pted_torch(
         I = torch.randperm(len(z))
         dmatrix = dmatrix[I][:, I]
         permute_stats.append(_energy_distance_precompute(dmatrix, nx, ny).item())
+    return test_stat, permute_stats
+
+
+def pted_jax(
+    x,
+    y,
+    permutations: int = 100,
+    metric: Union[str, float] = "euclidean",
+    prog_bar: bool = False,
+) -> tuple[float, list[float]]:
+    assert jax is not None, "JAX is not installed! try: `pip install jax`"
+    z = jnp.concatenate([x, y], axis=0)
+    assert jnp.all(jnp.isfinite(z)), "Input contains NaN or Inf!"
+    if metric == "euclidean":
+        metric = 2.0
+    dmatrix = _jax_cdist(z, z, p=metric)
+    assert jnp.all(
+        jnp.isfinite(dmatrix)
+    ), "Distance matrix contains NaN or Inf! Consider using a different metric or normalizing values to be more stable (i.e. z-score norm)."
+    nx = len(x)
+    ny = len(y)
+
+    test_stat = float(_energy_distance_precompute(dmatrix, nx, ny))
+    permute_stats = []
+    for _ in trange(permutations, disable=not prog_bar):
+        I = np.random.permutation(len(z))
+        dmatrix = dmatrix[I][:, I]
+        permute_stats.append(float(_energy_distance_precompute(dmatrix, nx, ny)))
+    return test_stat, permute_stats
+
+
+def pted_chunk_jax(
+    x,
+    y,
+    permutations: int = 100,
+    metric: Union[str, float] = "euclidean",
+    chunk_size: int = 100,
+    chunk_iter: int = 10,
+    prog_bar: bool = False,
+) -> tuple[float, list[float]]:
+    assert jax is not None, "JAX is not installed! try: `pip install jax`"
+    assert jnp.all(jnp.isfinite(x)) and jnp.all(jnp.isfinite(y)), "Input contains NaN or Inf!"
+    nx = len(x)
+
+    test_stat = _energy_distance_estimate_jax(x, y, chunk_size, chunk_iter, metric=metric)
+    permute_stats = []
+    for _ in trange(permutations, disable=not prog_bar):
+        z = jnp.concatenate([x, y], axis=0)
+        z = z[np.random.permutation(len(z))]
+        x, y = z[:nx], z[nx:]
+        permute_stats.append(
+            _energy_distance_estimate_jax(x, y, chunk_size, chunk_iter, metric=metric)
+        )
     return test_stat, permute_stats
 
 

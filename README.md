@@ -29,6 +29,12 @@ If you want to run PTED on GPUs using PyTorch, then also install torch:
 pip install torch
 ```
 
+If you want to use JAX arrays as inputs, then also install jax:
+
+```bash
+pip install jax
+```
+
 The two functions are ``pted.pted`` and ``pted.pted_coverage_test``. For
 information about each argument, just use ``help(pted.pted)`` or
 ``help(pted.pted_coverage_test)``. 
@@ -261,8 +267,8 @@ results you are getting!
 
 ```python
 def pted(
-    x: Union[np.ndarray, "Tensor"],
-    y: Union[np.ndarray, "Tensor"],
+    x: Union[np.ndarray, "Tensor", "jax.Array"],
+    y: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
     metric: Union[str, float] = "euclidean",
     return_all: bool = False,
@@ -273,10 +279,10 @@ def pted(
 ) -> Union[float, tuple[float, np.ndarray, float]]:
 ```
 
-* **x** *(Union[np.ndarray, Tensor])*: first set of samples. Shape (N, *D)
-* **y** *(Union[np.ndarray, Tensor])*: second set of samples. Shape (M, *D)
+* **x** *(Union[np.ndarray, Tensor, jax.Array])*: first set of samples. Shape (N, *D)
+* **y** *(Union[np.ndarray, Tensor, jax.Array])*: second set of samples. Shape (M, *D)
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
-* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf.
+* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf. When using JAX arrays, the metric is passed as the "ord" for jnp.linalg.norm and therefore is also a float.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
 * **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
 * **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
@@ -287,8 +293,8 @@ def pted(
 
 ```python
 def pted_coverage_test(
-    g: Union[np.ndarray, "Tensor"],
-    s: Union[np.ndarray, "Tensor"],
+    g: Union[np.ndarray, "Tensor", "jax.Array"],
+    s: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
     metric: Union[str, float] = "euclidean",
     warn_confidence: Optional[float] = 1e-3,
@@ -301,10 +307,10 @@ def pted_coverage_test(
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
 ```
 
-* **g** *(Union[np.ndarray, Tensor])*: Ground truth samples. Shape (n_sims, *D)
-* **s** *(Union[np.ndarray, Tensor])*: Posterior samples. Shape (n_samples, n_sims, *D)
+* **g** *(Union[np.ndarray, Tensor, jax.Array])*: Ground truth samples. Shape (n_sims, *D)
+* **s** *(Union[np.ndarray, Tensor, jax.Array])*: Posterior samples. Shape (n_samples, n_sims, *D)
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
-* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf.
+* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf. When using JAX arrays, the metric is passed as the "ord" for jnp.linalg.norm and therefore is also a float.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
 * **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
 * **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
@@ -315,9 +321,9 @@ def pted_coverage_test(
 ## GPU Compatibility
 
 PTED works on both CPU and GPU. All that is needed is to pass the `x` and `y` as
-PyTorch Tensors on the appropriate device.
+PyTorch Tensors or JAX Arrays on the appropriate device.
 
-Example:
+Example with PyTorch:
 ```python
 from pted import pted
 import numpy as np
@@ -327,6 +333,19 @@ x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
 y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
 
 p_value = pted(torch.tensor(x), torch.tensor(y))
+print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
+```
+
+Example with JAX:
+```python
+from pted import pted
+import numpy as np
+import jax.numpy as jnp
+
+x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
+y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
+
+p_value = pted(jnp.array(x), jnp.array(y))
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
 
