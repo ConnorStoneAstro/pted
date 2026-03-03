@@ -248,6 +248,19 @@ def test_jax_cdist():
     assert float(D[1, 0]) == pytest.approx(5.0)
 
 
+def test_jax_cdist_non_euclidean():
+    """_jax_cdist produces correct pairwise distances for p != 2 (vmap path)."""
+    if jax is None:
+        pytest.skip("jax not installed")
+    x = jnp.array([[0.0, 0.0], [3.0, 4.0]])
+    y = jnp.array([[0.0, 0.0], [1.0, 0.0]])
+    # L1: d(x[0], y[1]) = |0-1| + |0-0| = 1; d(x[1], y[0]) = |3-0| + |4-0| = 7
+    D = pted.utils._jax_cdist(x, y, p=1.0)
+    assert D.shape == (2, 2)
+    assert float(D[0, 1]) == pytest.approx(1.0)
+    assert float(D[1, 0]) == pytest.approx(7.0)
+
+
 def test_energy_distance_jax():
     """_energy_distance_jax returns 0 when x and y are identical."""
     if jax is None:

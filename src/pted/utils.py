@@ -128,8 +128,15 @@ def _energy_distance_estimate_torch(
 
 
 def _jax_cdist(x, y, p: float = 2.0):
-    diff = x[:, None, :] - y[None, :, :]
-    return jnp.linalg.norm(diff, ord=p, axis=-1)
+    if p == 2.0:
+        # Squared-norm identity avoids materializing the (nx, ny, d) diff tensor.
+        # ||x_i - y_j||^2 = ||x_i||^2 + ||y_j||^2 - 2 * x_i . y_j
+        x_sq = jnp.sum(x ** 2, axis=-1)  # (nx,)
+        y_sq = jnp.sum(y ** 2, axis=-1)  # (ny,)
+        sq_dist = x_sq[:, None] + y_sq[None, :] - 2.0 * (x @ y.T)
+        return jnp.sqrt(jnp.maximum(sq_dist, 0.0))
+    # For general p-norms use vmap to avoid the (nx, ny, d) intermediate.
+    return jax.vmap(lambda xi: jnp.linalg.norm(xi - y, ord=p, axis=-1))(x)
 
 
 def _energy_distance_jax(x, y, metric: Union[str, float] = "euclidean") -> float:
