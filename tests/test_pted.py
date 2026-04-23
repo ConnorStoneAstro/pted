@@ -174,7 +174,7 @@ def test_pit_plot_coverage_test():
 
     pted.pted_coverage_test(g, s, permutations=100, pit_plot="pit_coverage.pdf")
     assert os.path.exists("pit_coverage.pdf"), "PIT plot file was not created"
-    # os.remove("pit_coverage.pdf")
+    os.remove("pit_coverage.pdf")
 
 
 def test_pit_plot_utility_direct():
@@ -182,7 +182,7 @@ def test_pit_plot_utility_direct():
     pvals = np.random.uniform(size=50)
     pted.utils.pit_plot(pvals, "pit_direct.pdf")
     assert os.path.exists("pit_direct.pdf"), "PIT plot file was not created"
-    # os.remove("pit_direct.pdf")
+    os.remove("pit_direct.pdf")
 
     # Edge case: fewer than 2 p-values should warn and not create a file
     import warnings
@@ -228,13 +228,13 @@ def test_pted_chunk_jax():
     np.random.seed(42)
 
     # example 2 sample test
-    D = 10
-    x = jnp.array(np.random.normal(size=(1000, D)))
-    y = jnp.array(np.random.normal(size=(1000, D)))
+    D = 3
+    x = jnp.array(np.random.normal(size=(100, D)))
+    y = jnp.array(np.random.normal(size=(100, D)))
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
-    y = jnp.array(np.random.uniform(size=(1000, D)))
+    y = jnp.array(np.random.uniform(size=(110, D)))
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
@@ -243,8 +243,8 @@ def test_pted_coverage_jax():
     if jax is None:
         pytest.skip("jax not installed")
 
-    g = jnp.array(np.random.normal(size=(100, 10)))
-    s = jnp.array(np.random.normal(size=(50, 100, 10)))
+    g = jnp.array(np.random.normal(size=(75, 5)))
+    s = jnp.array(np.random.normal(size=(50, 75, 5)))
     p = pted.pted_coverage_test(g, s)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
@@ -299,7 +299,7 @@ def test_energy_distance_jax():
     if jax is None:
         pytest.skip("jax not installed")
     x = jnp.array(np.random.normal(size=(50, 5)))
-    # Identical samples → energy distance should be ~0
+    # Identical samples means energy distance should be ~0
     ed = pted.utils._energy_distance_jax(x, x)
     assert abs(ed) < 1e-6
 
