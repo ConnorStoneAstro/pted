@@ -3,7 +3,7 @@ from warnings import warn
 
 import numpy as np
 from scipy.spatial.distance import cdist
-from scipy.stats import chi2 as chi2_dist, binom
+from scipy.stats import chi2 as chi2_dist, binom, kstwo, kstest
 from scipy.optimize import root_scalar
 from tqdm.auto import trange
 
@@ -132,8 +132,8 @@ def _jax_cdist(x, y, p: float = 2.0):
     if p == 2.0:
         # Squared-norm identity avoids materializing the (nx, ny, d) diff tensor.
         # ||x_i - y_j||^2 = ||x_i||^2 + ||y_j||^2 - 2 * x_i . y_j
-        x_sq = jnp.sum(x ** 2, axis=-1)  # (nx,)
-        y_sq = jnp.sum(y ** 2, axis=-1)  # (ny,)
+        x_sq = jnp.sum(x**2, axis=-1)  # (nx,)
+        y_sq = jnp.sum(y**2, axis=-1)  # (ny,)
         sq_dist = x_sq[:, None] + y_sq[None, :] - 2.0 * (x @ y.T)
         return jnp.sqrt(jnp.maximum(sq_dist, 0.0))
     # For general p-norms use vmap to avoid the (nx, ny, d) intermediate.
@@ -223,7 +223,11 @@ def pted_chunk_torch(
 
 
 def pted_numpy(
-    x: np.ndarray, y: np.ndarray, permutations: int = 100, metric: str = "euclidean", prog_bar: bool = False,
+    x: np.ndarray,
+    y: np.ndarray,
+    permutations: int = 100,
+    metric: str = "euclidean",
+    prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     z = np.concatenate((x, y), axis=0)
     assert np.all(np.isfinite(z)), "Input contains NaN or Inf!"
@@ -411,7 +415,7 @@ def simulation_based_calibration_histogram(ranks, saveto, bins=None):
     plt.close()
 
 
-def pit_plot(pvals, saveto, confidence=0.9):
+def pit_plot(pvals, saveto, confidence=0.95):
     """Create a Probability Integral Transform (PIT) plot.
 
     Plots the empirical CDF of the provided p-values against the expected
@@ -431,7 +435,7 @@ def pit_plot(pvals, saveto, confidence=0.9):
         saveto (str): File path where the plot will be saved. The format is
             inferred from the file extension (e.g. ".pdf", ".png").
         confidence (float): Confidence level for the KS confidence band.
-            Default is 0.9 (90%).
+            Default is 0.95 (95%).
     """
     try:
         import matplotlib.pyplot as plt
@@ -439,10 +443,8 @@ def pit_plot(pvals, saveto, confidence=0.9):
         warn("No PIT plot generated! Please install matplotlib.")
         return
 
-    from scipy.stats import kstwo, kstest
-
     pvals = np.asarray(pvals, dtype=float)
-    n = len(pvals)
+    n = len(pvals.flatten())
     if n < 2:
         warn("PIT plot requires at least 2 p-values. Skipping.")
         return
@@ -451,10 +453,7 @@ def pit_plot(pvals, saveto, confidence=0.9):
     ecdf = np.arange(1, n + 1) / n
 
     # Critical value for the two-sided KS statistic at the given confidence level.
-    # scipy.stats.kstwo(n) is the distribution of sqrt(n) * D_n, where D_n is the
-    # supremum of |F_n(x) - x| over all x.  Dividing the quantile by sqrt(n)
-    # recovers the critical value in the original D_n scale.
-    d_crit = kstwo.ppf(confidence, n) / np.sqrt(n)
+    d_crit = kstwo.ppf(confidence, n)
 
     # One-sample KS test against U(0,1) for annotation
     ks_stat, ks_pval = kstest(pvals, "uniform")
@@ -471,7 +470,7 @@ def pit_plot(pvals, saveto, confidence=0.9):
         linewidth=0,
         label=f"{int(confidence * 100)}% KS confidence band",
     )
-    ax.plot([0, 1], [0, 1], "k--", alpha=0.5, label="Expected (Uniform)")
+    ax.plot([0, 1], [0, 1], "k--", alpha=0.8, label="Expected (Uniform)")
     ax.step(
         np.concatenate([[0], sorted_pvals, [1]]),
         np.concatenate([[0], ecdf, [1]]),

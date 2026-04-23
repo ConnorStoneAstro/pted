@@ -30,8 +30,6 @@ def pted(
     chunk_iter: Optional[int] = None,
     two_tailed: bool = True,
     prog_bar: bool = False,
-    pit_plot: Optional[str] = None,
-    pit_confidence: float = 0.9,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
     """
     Two sample null hypothesis test using a permutation test on the energy
@@ -103,17 +101,6 @@ def pted(
             too similar or too different. Default is True.
         prog_bar (bool): if True, show a progress bar to track the progress
             of permutation tests. Default is False.
-        pit_plot (Optional[str]): If given, the path/filename to save a
-            Probability Integral Transform (PIT) plot. The plot shows the
-            empirical CDF of the pseudo-p-values derived from the permuted
-            statistics against the expected uniform CDF, along with a shaded
-            confidence band. For a single call to ``pted``, each permuted
-            statistic is treated as if it were the test statistic to produce
-            a set of pseudo-p-values; under the null hypothesis these should
-            be uniformly distributed. Default is None (no plot saved).
-        pit_confidence (float): Confidence level for the KS confidence band
-            in the PIT plot. Default is 0.9 (90%). Only used when
-            ``pit_plot`` is not None.
 
 
     Note
@@ -198,15 +185,11 @@ def pted(
     else:
         q = np.sum(permute >= test)
 
-    pvals = (1.0 + q) / (1.0 + permutations)
-
-    # Probability Integral Transform (PIT) plot
-    if pit_plot is not None:
-        _pit_plot(pvals, pit_plot, confidence=pit_confidence)
+    pval = (1.0 + q) / (1.0 + permutations)
 
     if return_all:
-        return test, permute, pvals
-    return pvals
+        return test, permute, pval
+    return pval
 
 
 def pted_coverage_test(
@@ -221,7 +204,7 @@ def pted_coverage_test(
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
     pit_plot: Optional[str] = None,
-    pit_confidence: float = 0.9,
+    pit_confidence: float = 0.95,
     prog_bar: bool = False,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
     """
@@ -301,7 +284,7 @@ def pted_coverage_test(
             band. Deviations outside the band indicate that the p-values are
             not uniformly distributed. Default is None (no plot saved).
         pit_confidence (float): Confidence level for the KS confidence band
-            in the PIT plot. Default is 0.9 (90%). Only used when
+            in the PIT plot. Default is 0.95 (95%). Only used when
             ``pit_plot`` is not None.
         prog_bar (bool): If True, show a progress bar to track the progress
             of simulations. Default is False.
