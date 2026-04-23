@@ -162,6 +162,41 @@ def test_sbc_histogram():
     os.remove("sbc_hist.pdf")
 
 
+def test_pit_plot_coverage_test():
+    g = np.random.normal(size=(100, 10))  # ground truth (nsim, ndim)
+    s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
+
+    pted.pted_coverage_test(g, s, permutations=100, pit_plot="pit_coverage.pdf")
+    assert os.path.exists("pit_coverage.pdf"), "PIT plot file was not created"
+    os.remove("pit_coverage.pdf")
+
+
+def test_pit_plot_pted():
+    x = np.random.normal(size=(50, 5))
+    y = np.random.normal(size=(50, 5))
+
+    pted.pted(x, y, permutations=100, pit_plot="pit_pted.pdf")
+    assert os.path.exists("pit_pted.pdf"), "PIT plot file was not created"
+    os.remove("pit_pted.pdf")
+
+
+def test_pit_plot_utility_direct():
+    """pit_plot utility function creates a file and handles edge cases."""
+    pvals = np.random.uniform(size=50)
+    pted.utils.pit_plot(pvals, "pit_direct.pdf")
+    assert os.path.exists("pit_direct.pdf"), "PIT plot file was not created"
+    os.remove("pit_direct.pdf")
+
+    # Edge case: fewer than 2 p-values should warn and not create a file
+    import warnings
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        pted.utils.pit_plot(np.array([0.5]), "pit_single.pdf")
+        assert len(w) == 1
+        assert "at least 2" in str(w[0].message)
+    assert not os.path.exists("pit_single.pdf")
+
+
 def test_pted_jax():
     if jax is None:
         pytest.skip("jax not installed")

@@ -86,6 +86,8 @@ print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 
 Note, you can also provide a filename via a parameter: `sbc_histogram = "sbc_hist.pdf"` and this will generate an SBC histogram from the test[^1].
 
+You can also generate a Probability Integral Transform (PIT) plot via `pit_plot = "pit.pdf"` for both `pted_coverage_test` and `pted`. The PIT plot shows the empirical CDF of the p-values against the expected uniform CDF (1:1 diagonal), along with a shaded 90% KS confidence band. Any portion of the curve that deviates outside the band is evidence that the p-values are not uniformly distributed, indicating a miscalibrated posterior.
+
 ## How it works
 
 ### Two sample test
@@ -303,6 +305,8 @@ def pted_coverage_test(
     chunk_iter: Optional[int] = None,
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
+    pit_plot: Optional[str] = None,
+    pit_confidence: float = 0.9,
     prog_bar: bool = False,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
 ```
@@ -316,6 +320,8 @@ def pted_coverage_test(
 * **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
+* **pit_plot** *(Optional[str])*: If given, the path/filename to save a Probability Integral Transform (PIT) plot of the per-simulation p-values against the expected uniform distribution, with a shaded KS confidence band.
+* **pit_confidence** *(float)*: Confidence level for the KS confidence band in the PIT plot. Default is 0.9 (90%). Only used when `pit_plot` is not None.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of simulations. Default is False.
 
 ## GPU Compatibility
