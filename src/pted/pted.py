@@ -159,7 +159,9 @@ def pted(
             prog_bar=prog_bar,
         )
     elif is_torch_tensor(x):
-        test, permute = pted_torch(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
+        test, permute = pted_torch(
+            x, y, permutations=permutations, metric=metric, prog_bar=prog_bar
+        )
     elif is_jax_array(x) and chunk_size is not None:
         test, permute = pted_chunk_jax(
             x,
@@ -183,7 +185,9 @@ def pted(
             prog_bar=prog_bar,
         )
     else:
-        test, permute = pted_numpy(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
+        test, permute = pted_numpy(
+            x, y, permutations=permutations, metric=metric, prog_bar=prog_bar
+        )
 
     permute = np.array(permute)
 
@@ -194,22 +198,15 @@ def pted(
     else:
         q = np.sum(permute >= test)
 
-    p = (1.0 + q) / (1.0 + permutations)
+    pvals = (1.0 + q) / (1.0 + permutations)
 
     # Probability Integral Transform (PIT) plot
     if pit_plot is not None:
-        # Treat each permuted statistic as if it were the test statistic to
-        # produce pseudo-p-values.  Under the null hypothesis (exchangeability
-        # of permutations) these should be approximately U(0, 1).
-        n_permute = len(permute)
-        pseudo_pvals = (1.0 + np.sum(permute[:, None] >= permute[None, :], axis=1)) / (
-            1.0 + n_permute
-        )
-        _pit_plot(pseudo_pvals, pit_plot, confidence=pit_confidence)
+        _pit_plot(pvals, pit_plot, confidence=pit_confidence)
 
     if return_all:
-        return test, permute, p
-    return p
+        return test, permute, pvals
+    return pvals
 
 
 def pted_coverage_test(
