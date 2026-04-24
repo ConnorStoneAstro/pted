@@ -443,8 +443,8 @@ def pit_plot(pvals, saveto, confidence=0.95):
         warn("No PIT plot generated! Please install matplotlib.")
         return
 
-    pvals = np.asarray(pvals, dtype=float)
-    n = len(pvals.flatten())
+    pvals = np.asarray(pvals, dtype=float).ravel()
+    n = len(pvals)
     if n < 2:
         warn("PIT plot requires at least 2 p-values. Skipping.")
         return

@@ -306,7 +306,7 @@ def pted_coverage_test(
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
     pit_plot: Optional[str] = None,
-    pit_confidence: float = 0.9,
+    pit_confidence: float = 0.95,
     prog_bar: bool = False,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
 ```
