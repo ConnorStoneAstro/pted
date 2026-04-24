@@ -86,7 +86,7 @@ print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 
 Note, you can also provide a filename via a parameter: `sbc_histogram = "sbc_hist.pdf"` and this will generate an SBC histogram from the test[^1].
 
-You can also generate a Probability Integral Transform (PIT) plot via `pit_plot = "pit.pdf"` for `pted_coverage_test`. The PIT plot shows the empirical CDF of the p-values against the expected uniform CDF (1:1 diagonal), along with a shaded 95% KS confidence band. Any portion of the curve that deviates outside the band is evidence that the p-values are not uniformly distributed (with a 5% type 1 error), indicating a potentially miscalibrated posterior.
+You can also generate a Probability Integral Transform (PIT) plot via `pit_plot = "pit.pdf"` for `pted_coverage_test`. The PIT plot shows the empirical CDF of the p-values against the expected uniform CDF (1:1 diagonal), along with a shaded KS confidence band determined by `pit_confidence` (95% by default). Any portion of the curve that deviates outside the band is evidence that the p-values are not uniformly distributed, at a significance level of `1 - pit_confidence` (5% by default), indicating a potentially miscalibrated posterior.
 
 ## How it works
 
