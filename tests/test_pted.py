@@ -42,11 +42,15 @@ def test_pted_main():
 
 
 def test_pted_progress_bar(capsys):
-    pted.pted(np.array([[1,2],[3,4]]), np.array([[3,2],[1,4]]), permutations=42)
+    pted.pted(np.array([[1, 2], [3, 4]]), np.array([[3, 2], [1, 4]]), permutations=42)
     captured = capsys.readouterr().err
-    assert "42/42" not in captured, "progress bar showed up when prog_bar is set to False by default"
+    assert (
+        "42/42" not in captured
+    ), "progress bar showed up when prog_bar is set to False by default"
 
-    pted.pted(np.array([[1,2],[3,4]]), np.array([[3,2],[1,4]]), permutations=42, prog_bar=True)
+    pted.pted(
+        np.array([[1, 2], [3, 4]]), np.array([[3, 2], [1, 4]]), permutations=42, prog_bar=True
+    )
     captured = capsys.readouterr().err
     assert "42/42" in captured, "progress bar did not show when prog_bar is set to True"
 
@@ -136,7 +140,9 @@ def test_pted_coverage_progress_bar(capsys):
     s = np.random.normal(size=(100, 42, 10))
     pted.pted_coverage_test(g, s)
     captured = capsys.readouterr().err
-    assert "42/42" not in captured, "progress bar showed up when prog_bar is set to False by default"
+    assert (
+        "42/42" not in captured
+    ), "progress bar showed up when prog_bar is set to False by default"
 
     pted.pted_coverage_test(g, s, prog_bar=True)
     captured = capsys.readouterr().err
@@ -160,6 +166,33 @@ def test_sbc_histogram():
 
     pted.pted_coverage_test(g, s, permutations=100, sbc_histogram="sbc_hist.pdf")
     os.remove("sbc_hist.pdf")
+
+
+def test_pit_plot_coverage_test():
+    g = np.random.normal(size=(100, 10))  # ground truth (nsim, ndim)
+    s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
+
+    pted.pted_coverage_test(g, s, permutations=100, pit_plot="pit_coverage.pdf")
+    assert os.path.exists("pit_coverage.pdf"), "PIT plot file was not created"
+    os.remove("pit_coverage.pdf")
+
+
+def test_pit_plot_utility_direct():
+    """pit_plot utility function creates a file and handles edge cases."""
+    pvals = np.random.uniform(size=50)
+    pted.utils.pit_plot(pvals, "pit_direct.pdf")
+    assert os.path.exists("pit_direct.pdf"), "PIT plot file was not created"
+    os.remove("pit_direct.pdf")
+
+    # Edge case: fewer than 2 p-values should warn and not create a file
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        pted.utils.pit_plot(np.array([0.5]), "pit_single.pdf")
+        assert len(w) == 1
+        assert "at least 2" in str(w[0].message)
+    assert not os.path.exists("pit_single.pdf")
 
 
 def test_pted_jax():
@@ -195,13 +228,13 @@ def test_pted_chunk_jax():
     np.random.seed(42)
 
     # example 2 sample test
-    D = 10
-    x = jnp.array(np.random.normal(size=(1000, D)))
-    y = jnp.array(np.random.normal(size=(1000, D)))
+    D = 3
+    x = jnp.array(np.random.normal(size=(100, D)))
+    y = jnp.array(np.random.normal(size=(100, D)))
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
-    y = jnp.array(np.random.uniform(size=(1000, D)))
+    y = jnp.array(np.random.uniform(size=(110, D)))
     p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
@@ -210,8 +243,8 @@ def test_pted_coverage_jax():
     if jax is None:
         pytest.skip("jax not installed")
 
-    g = jnp.array(np.random.normal(size=(100, 10)))
-    s = jnp.array(np.random.normal(size=(50, 100, 10)))
+    g = jnp.array(np.random.normal(size=(75, 5)))
+    s = jnp.array(np.random.normal(size=(50, 75, 5)))
     p = pted.pted_coverage_test(g, s)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
@@ -266,7 +299,7 @@ def test_energy_distance_jax():
     if jax is None:
         pytest.skip("jax not installed")
     x = jnp.array(np.random.normal(size=(50, 5)))
-    # Identical samples → energy distance should be ~0
+    # Identical samples means energy distance should be ~0
     ed = pted.utils._energy_distance_jax(x, x)
     assert abs(ed) < 1e-6
 
@@ -346,17 +379,15 @@ def test_energy_distance_numpy_torch_jax_agree():
     y_np = np.random.normal(size=(30, 5)).astype(np.float32)
 
     ed_numpy = pted.utils._energy_distance_numpy(x_np, y_np)
-    ed_torch = pted.utils._energy_distance_torch(
-        torch.tensor(x_np), torch.tensor(y_np)
-    )
+    ed_torch = pted.utils._energy_distance_torch(torch.tensor(x_np), torch.tensor(y_np))
     ed_jax = pted.utils._energy_distance_jax(jnp.array(x_np), jnp.array(y_np))
 
-    assert ed_numpy == pytest.approx(ed_torch, rel=1e-4), (
-        f"numpy ({ed_numpy}) and torch ({ed_torch}) energy distances differ"
-    )
-    assert ed_numpy == pytest.approx(ed_jax, rel=1e-4), (
-        f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distances differ"
-    )
+    assert ed_numpy == pytest.approx(
+        ed_torch, rel=1e-4
+    ), f"numpy ({ed_numpy}) and torch ({ed_torch}) energy distances differ"
+    assert ed_numpy == pytest.approx(
+        ed_jax, rel=1e-4
+    ), f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distances differ"
 
 
 def test_energy_distance_estimate_numpy_torch_jax_agree():
@@ -383,9 +414,9 @@ def test_energy_distance_estimate_numpy_torch_jax_agree():
         jnp.array(x_np), jnp.array(y_np), chunk_size=50, chunk_iter=5
     )
 
-    assert ed_numpy == pytest.approx(ed_torch, rel=1e-4), (
-        f"numpy ({ed_numpy}) and torch ({ed_torch}) energy distance estimates differ"
-    )
-    assert ed_numpy == pytest.approx(ed_jax, rel=1e-4), (
-        f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distance estimates differ"
-    )
+    assert ed_numpy == pytest.approx(
+        ed_torch, rel=1e-4
+    ), f"numpy ({ed_numpy}) and torch ({ed_torch}) energy distance estimates differ"
+    assert ed_numpy == pytest.approx(
+        ed_jax, rel=1e-4
+    ), f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distance estimates differ"

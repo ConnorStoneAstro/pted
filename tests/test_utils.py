@@ -2,7 +2,7 @@ import sys, os
 
 import numpy as np
 
-from pted.utils import two_tailed_p, simulation_based_calibration_histogram
+from pted.utils import two_tailed_p, simulation_based_calibration_histogram, pit_plot
 
 import pytest
 
@@ -32,3 +32,12 @@ def test_sbc_histogram(monkeypatch):
 
     with pytest.warns():
         simulation_based_calibration_histogram(ranks, "sbc_hist.pdf", bins=10)
+
+
+def test_pit_plot_no_matplotlib(monkeypatch):
+
+    pvals = np.random.uniform(size=50)
+    monkeypatch.setitem(sys.modules, "matplotlib.pyplot", None)
+
+    with pytest.warns(UserWarning, match="matplotlib"):
+        pit_plot(pvals, "pit_no_mpl.pdf")

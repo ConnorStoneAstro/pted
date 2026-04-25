@@ -14,6 +14,7 @@ from .utils import (
     two_tailed_p,
     confidence_alert,
     simulation_based_calibration_histogram,
+    pit_plot as _pit_plot,
 )
 
 __all__ = ["pted", "pted_coverage_test"]
@@ -145,7 +146,9 @@ def pted(
             prog_bar=prog_bar,
         )
     elif is_torch_tensor(x):
-        test, permute = pted_torch(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
+        test, permute = pted_torch(
+            x, y, permutations=permutations, metric=metric, prog_bar=prog_bar
+        )
     elif is_jax_array(x) and chunk_size is not None:
         test, permute = pted_chunk_jax(
             x,
@@ -169,7 +172,9 @@ def pted(
             prog_bar=prog_bar,
         )
     else:
-        test, permute = pted_numpy(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
+        test, permute = pted_numpy(
+            x, y, permutations=permutations, metric=metric, prog_bar=prog_bar
+        )
 
     permute = np.array(permute)
 
@@ -180,11 +185,11 @@ def pted(
     else:
         q = np.sum(permute >= test)
 
-    p = (1.0 + q) / (1.0 + permutations)
+    pval = (1.0 + q) / (1.0 + permutations)
 
     if return_all:
-        return test, permute, p
-    return p
+        return test, permute, pval
+    return pval
 
 
 def pted_coverage_test(
@@ -198,6 +203,8 @@ def pted_coverage_test(
     chunk_iter: Optional[int] = None,
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
+    pit_plot: Optional[str] = None,
+    pit_confidence: float = 0.95,
     prog_bar: bool = False,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
     """
@@ -270,6 +277,15 @@ def pted_coverage_test(
             Simulation-Based-Calibration histogram.
         sbc_bins (Optional[int]): If given, force the histogram to have the provided
             number of bins. Otherwise, select an appropriate size: ~sqrt(N).
+        pit_plot (Optional[str]): If given, the path/filename to save a
+            Probability Integral Transform (PIT) plot. The plot shows the
+            empirical CDF of the per-simulation p-values against the expected
+            uniform CDF (1:1 diagonal), together with a shaded KS confidence
+            band. Deviations outside the band indicate that the p-values are
+            not uniformly distributed. Default is None (no plot saved).
+        pit_confidence (float): Confidence level for the KS confidence band
+            in the PIT plot. Default is 0.95 (95%). Only used when
+            ``pit_plot`` is not None.
         prog_bar (bool): If True, show a progress bar to track the progress
             of simulations. Default is False.
 
@@ -325,6 +341,10 @@ def pted_coverage_test(
     if sbc_histogram is not None:
         ranks = np.sum(test_stats[:, None] >= permute_stats, axis=1) / permutations
         simulation_based_calibration_histogram(ranks, sbc_histogram, bins=sbc_bins)
+
+    # Probability Integral Transform (PIT) plot
+    if pit_plot is not None:
+        _pit_plot(pvals, pit_plot, confidence=pit_confidence)
 
     # Compute p-value
     if nsim == 1:

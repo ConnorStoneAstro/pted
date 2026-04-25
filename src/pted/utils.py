@@ -3,7 +3,7 @@ from warnings import warn
 
 import numpy as np
 from scipy.spatial.distance import cdist
-from scipy.stats import chi2 as chi2_dist, binom
+from scipy.stats import chi2 as chi2_dist, binom, kstwo, kstest
 from scipy.optimize import root_scalar
 from tqdm.auto import trange
 
@@ -36,6 +36,7 @@ __all__ = (
     "two_tailed_p",
     "confidence_alert",
     "simulation_based_calibration_histogram",
+    "pit_plot",
 )
 
 
@@ -131,8 +132,8 @@ def _jax_cdist(x, y, p: float = 2.0):
     if p == 2.0:
         # Squared-norm identity avoids materializing the (nx, ny, d) diff tensor.
         # ||x_i - y_j||^2 = ||x_i||^2 + ||y_j||^2 - 2 * x_i . y_j
-        x_sq = jnp.sum(x ** 2, axis=-1)  # (nx,)
-        y_sq = jnp.sum(y ** 2, axis=-1)  # (ny,)
+        x_sq = jnp.sum(x**2, axis=-1)  # (nx,)
+        y_sq = jnp.sum(y**2, axis=-1)  # (ny,)
         sq_dist = x_sq[:, None] + y_sq[None, :] - 2.0 * (x @ y.T)
         return jnp.sqrt(jnp.maximum(sq_dist, 0.0))
     # For general p-norms use vmap to avoid the (nx, ny, d) intermediate.
@@ -222,7 +223,11 @@ def pted_chunk_torch(
 
 
 def pted_numpy(
-    x: np.ndarray, y: np.ndarray, permutations: int = 100, metric: str = "euclidean", prog_bar: bool = False,
+    x: np.ndarray,
+    y: np.ndarray,
+    permutations: int = 100,
+    metric: str = "euclidean",
+    prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     z = np.concatenate((x, y), axis=0)
     assert np.all(np.isfinite(z)), "Input contains NaN or Inf!"
@@ -408,3 +413,76 @@ def simulation_based_calibration_histogram(ranks, saveto, bins=None):
     plt.title("Simulation-Based-Calibration Histogram")
     plt.savefig(saveto, bbox_inches="tight")
     plt.close()
+
+
+def pit_plot(pvals, saveto, confidence=0.95):
+    """Create a Probability Integral Transform (PIT) plot.
+
+    Plots the empirical CDF of the provided p-values against the expected
+    CDF for a uniform distribution (the 1:1 diagonal). A shaded confidence
+    region is drawn showing the range within which the empirical CDF should
+    fall with probability ``confidence`` if the p-values are truly uniform.
+    The confidence band is derived from the two-sided Kolmogorov-Smirnov
+    statistic. Any portion of the empirical CDF that lies outside this band
+    constitutes evidence that the p-values are not uniformly distributed.
+
+    The KS statistic and its p-value are annotated on the plot to quantify
+    the maximum deviation from the diagonal.
+
+    Parameters
+    ----------
+        pvals (array-like): Array of p-values in [0, 1].
+        saveto (str): File path where the plot will be saved. The format is
+            inferred from the file extension (e.g. ".pdf", ".png").
+        confidence (float): Confidence level for the KS confidence band.
+            Default is 0.95 (95%).
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        warn("No PIT plot generated! Please install matplotlib.")
+        return
+
+    pvals = np.asarray(pvals, dtype=float).ravel()
+    n = len(pvals)
+    if n < 2:
+        warn("PIT plot requires at least 2 p-values. Skipping.")
+        return
+
+    sorted_pvals = np.sort(pvals)
+    ecdf = np.arange(1, n + 1) / n
+
+    # Critical value for the two-sided KS statistic at the given confidence level.
+    d_crit = kstwo.ppf(confidence, n)
+
+    # One-sample KS test against U(0,1) for annotation
+    ks_stat, ks_pval = kstest(pvals, "uniform")
+
+    x = np.linspace(0, 1, 500)
+
+    fig, ax = plt.subplots()
+    ax.fill_between(
+        x,
+        np.maximum(x - d_crit, 0),
+        np.minimum(x + d_crit, 1),
+        color="grey",
+        alpha=0.3,
+        linewidth=0,
+        label=f"{int(confidence * 100)}% KS confidence band",
+    )
+    ax.plot([0, 1], [0, 1], "k--", alpha=0.8, label="Expected (Uniform)")
+    ax.step(
+        np.concatenate([[0], sorted_pvals, [1]]),
+        np.concatenate([[0], ecdf, [1]]),
+        where="post",
+        color="#A34F4F",
+        label=f"Empirical CDF (KS={ks_stat:.3f}, p={ks_pval:.3f})",
+    )
+    ax.set_xlabel("p-value")
+    ax.set_ylabel("Empirical CDF")
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+    ax.set_title("Probability Integral Transform (PIT) Plot")
+    ax.legend()
+    fig.savefig(saveto, bbox_inches="tight")
+    plt.close(fig)
