@@ -403,7 +403,7 @@ def test_energy_distance_numpy_torch_jax_agree():
 
 
 def test_energy_distance_estimate_matches_energy_distance():
-    """_energy_distance_estimate returns the same value as _energy_distance for small inputs."""
+    """_energy_distance_estimate returns a value close to _energy_distance for small inputs."""
     np.random.seed(123)
     x = np.random.normal(size=(100, 5))
     y = np.random.uniform(size=(100, 5))
