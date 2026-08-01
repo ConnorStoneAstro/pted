@@ -31,7 +31,7 @@ def test_inputs_extra_dims():
     if torch is None:
         pytest.skip("torch not installed")
     # Test with torch tensors
-    torch.manual_seed(42)
+    torch.manual_seed(43)
     g = torch.randn(100, 30, 30)
     s = torch.randn(50, 100, 30, 30)
     p = pted.pted_coverage_test(g, s)
