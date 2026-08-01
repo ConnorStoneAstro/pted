@@ -123,6 +123,7 @@ def pted(
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
     assert len(y.shape) >= 2, f"y must be at least 2D, not {y.shape}"
     if chunk_size is not None:
+        assert chunk_size > 0, "chunk_size must be > 0"
         # If chunk_size covers both full datasets, chunking adds no benefit
         if chunk_size >= len(x) and chunk_size >= len(y):
             chunk_size = None
