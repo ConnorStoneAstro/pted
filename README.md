@@ -365,10 +365,12 @@ iterating over the larger dataset once and cycling through the smaller one if
 their sizes differ. The larger the chunk size, the closer the estimate will be
 to the true energy distance, but it will take more compute.
 
-Note that the computational complexity for standard PTED goes as 
-`O((n_samp_x + n_samp_y)^2)` while the chunked version goes as 
-`O(n_iter * (2 * chunk_size)^2)` where `n_iter = max(n_samp_x, n_samp_y) // chunk_size`,
-so plan your chunking accordingly.
+Note that the computational complexity for standard PTED goes as `O((n_samp_x +
+n_samp_y)^2)` while the chunked version goes as `O(n_iter * (2 * chunk_size)^2)`
+where `n_iter = max(n_samp_x, n_samp_y) // chunk_size`, so plan your chunking
+accordingly. For a given chunk size, the computational complexity of PTED grows
+linearly with dataset size, much like other large scale (machine learning
+oriented) two sample tests.
 
 Example:
 ```python
