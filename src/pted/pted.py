@@ -126,6 +126,9 @@ def pted(
         assert (
             chunk_size <= max(len(x), len(y))
         ), f"chunk_size ({chunk_size}) must be <= max(len(x), len(y)) ({max(len(x), len(y))})"
+        # If chunk_size covers both full datasets, chunking adds no benefit
+        if chunk_size >= len(x) and chunk_size >= len(y):
+            chunk_size = None
     assert (
         x.shape[1:] == y.shape[1:]
     ), f"x and y samples must have the same shape (past first dim), not {x.shape} and {y.shape}"

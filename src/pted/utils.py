@@ -1,3 +1,4 @@
+import math
 from typing import Union
 from warnings import warn
 
@@ -86,28 +87,58 @@ def _energy_distance_torch(
     return _energy_distance_precompute(D, nx, ny).item()
 
 
+def _tile_to_length(arr, n: int):
+    """Return arr tiled along axis 0 to exactly n rows.
+
+    If len(arr) >= n the array is simply sliced; otherwise it is repeated
+    along axis 0 enough times and then sliced to exactly n rows.
+    """
+    if len(arr) >= n:
+        return arr[:n]
+    reps = math.ceil(n / len(arr))
+    reps_tuple = (reps,) + (1,) * (arr.ndim - 1)
+    if is_torch_tensor(arr):
+        return arr.repeat(reps_tuple)[:n]
+    elif is_jax_array(arr):
+        return jnp.tile(arr, reps_tuple)[:n]
+    else:
+        return np.tile(arr, reps_tuple)[:n]
+
+
+def _energy_distance_estimate(
+    x,
+    y,
+    chunk_size: int,
+    metric: Union[str, float],
+    energy_distance_fn,
+) -> float:
+    """Estimate energy distance by averaging over sequential sliced chunks.
+
+    Iterates ``max(len(x), len(y)) // chunk_size`` times, using plain slicing
+    on both arrays.  The smaller of the two is tiled along axis 0 as needed so
+    that both arrays are at least ``n_iter * chunk_size`` rows long before the
+    loop begins.
+    """
+    n_iter = max(len(x), len(y)) // chunk_size
+    n_total = n_iter * chunk_size
+    x = _tile_to_length(x, n_total)
+    y = _tile_to_length(y, n_total)
+    E_est = []
+    for i in range(n_iter):
+        start = i * chunk_size
+        x_chunk = x[start : start + chunk_size]
+        y_chunk = y[start : start + chunk_size]
+        E_est.append(energy_distance_fn(x_chunk, y_chunk, metric=metric))
+    return np.mean(E_est)
+
+
 def _energy_distance_estimate_numpy(
     x: np.ndarray,
     y: np.ndarray,
     chunk_size: int,
     metric: Union[str, float] = "euclidean",
 ) -> float:
-
-    nx = len(x)
-    ny = len(y)
-    n_iter = max(nx, ny) // chunk_size
-
-    E_est = []
-    for i in range(n_iter):
-        # Iterate over the larger dataset, cycling the smaller one
-        x_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % nx
-        y_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % ny
-        x_chunk = x[x_idx]
-        y_chunk = y[y_idx]
-
-        # Compute the energy distance
-        E_est.append(_energy_distance_numpy(x_chunk, y_chunk, metric=metric))
-    return np.mean(E_est)
+    return _energy_distance_estimate(x, y, chunk_size, metric, _energy_distance_numpy)
 
 
 def _energy_distance_estimate_torch(
@@ -116,22 +147,7 @@ def _energy_distance_estimate_torch(
     chunk_size: int,
     metric: Union[str, float] = "euclidean",
 ) -> float:
-
-    nx = len(x)
-    ny = len(y)
-    n_iter = max(nx, ny) // chunk_size
-
-    E_est = []
-    for i in range(n_iter):
-        # Iterate over the larger dataset, cycling the smaller one
-        x_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % nx
-        y_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % ny
-        x_chunk = x[torch.tensor(x_idx)]
-        y_chunk = y[torch.tensor(y_idx)]
-
-        # Compute the energy distance
-        E_est.append(_energy_distance_torch(x_chunk, y_chunk, metric=metric))
-    return np.mean(E_est)
+    return _energy_distance_estimate(x, y, chunk_size, metric, _energy_distance_torch)
 
 
 def _jax_cdist(x, y, p: float = 2.0):
@@ -162,22 +178,7 @@ def _energy_distance_estimate_jax(
     chunk_size: int,
     metric: Union[str, float] = "euclidean",
 ) -> float:
-
-    nx = len(x)
-    ny = len(y)
-    n_iter = max(nx, ny) // chunk_size
-
-    E_est = []
-    for i in range(n_iter):
-        # Iterate over the larger dataset, cycling the smaller one
-        x_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % nx
-        y_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % ny
-        x_chunk = x[x_idx]
-        y_chunk = y[y_idx]
-
-        # Compute the energy distance
-        E_est.append(_energy_distance_jax(x_chunk, y_chunk, metric=metric))
-    return np.mean(E_est)
+    return _energy_distance_estimate(x, y, chunk_size, metric, _energy_distance_jax)
 
 
 def pted_chunk_numpy(

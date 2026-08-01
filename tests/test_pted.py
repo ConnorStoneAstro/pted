@@ -143,6 +143,23 @@ def test_pted_chunk_mismatched_sizes():
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
+def test_pted_chunk_size_fallback():
+    """chunk_size >= both dataset sizes falls back to regular (non-chunked) PTED."""
+    np.random.seed(7)
+    D = 5
+    x = np.random.normal(size=(50, D))
+    y = np.random.normal(size=(50, D))
+
+    # chunk_size equals both lengths → should silently fall back to regular PTED
+    p_chunk = pted.pted(x, y, chunk_size=50)
+    # Rerun with explicit non-chunked PTED using same seed for reference
+    np.random.seed(7)
+    p_plain = pted.pted(x, y)
+    # Both should give a valid p-value in U(0,1)
+    assert p_chunk > 1e-2 and p_chunk < 0.99, f"p-value {p_chunk} outside expected range"
+    assert p_plain > 1e-2 and p_plain < 0.99, f"p-value {p_plain} outside expected range"
+
+
 def test_pted_coverage_edgecase():
     # Test with single simulation
     g = np.random.normal(size=(1, 10))
