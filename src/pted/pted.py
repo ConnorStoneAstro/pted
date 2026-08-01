@@ -27,7 +27,6 @@ def pted(
     metric: Union[str, float] = "euclidean",
     return_all: bool = False,
     chunk_size: Optional[int] = None,
-    chunk_iter: Optional[int] = None,
     two_tailed: bool = True,
     prog_bar: bool = False,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
@@ -92,10 +91,10 @@ def pted(
             bool (default: False)
         chunk_size (Optional[int]): if not None, use chunked energy distance
             estimation. This is useful for large datasets. The chunk size is the
-            number of samples to use for each chunk. If None, use the full
-            dataset.
-        chunk_iter (Optional[int]): The chunk iter is the number of iterations
-            to use with the given chunk size.
+            number of samples per chunk. The number of chunks is determined
+            automatically as ``max(len(x), len(y)) // chunk_size``, iterating
+            over the larger dataset once and cycling through the smaller one.
+            If None, use the full dataset.
         two_tailed (bool): if True, compute a two-tailed p-value. This is useful
             if you want to reject the null hypothesis when x and y are either
             too similar or too different. Default is True.
@@ -109,14 +108,13 @@ def pted(
         samples in x and y, D is the number of dimensions, and P is the number
         of permutations. For large datasets this can get unwieldy, so chunking
         is recommended. For chunking, the energy distance will be estimated at
-        each iteration rather than fully computed. To estimate the energy
-        distance, we take `chunk_size` sub-samples from x and y, and compute the
-        energy distance on those sub-samples. This is repeated `chunk_iter`
-        times, and the average is taken. This is a trade-off between speed and
-        accuracy. The larger the chunk size and larger chunk_iter, the more
-        accurate the estimate, but the slower the computation. PTED remains an
-        exact p-value test even when chunking, it simply becomes less sensitive
-        to the difference between x and y. The chunked pted test has time
+        each iteration rather than fully computed. The dataset is divided into
+        sequential chunks of size `chunk_size`; the number of chunks (iterations)
+        is ``max(len(x), len(y)) // chunk_size``, iterating over the larger
+        dataset once and cycling through the smaller one. The average energy
+        distance over all chunks is the final estimate. PTED remains an exact
+        p-value test even when chunking, it simply becomes less sensitive to
+        the difference between x and y. The chunked pted test has time
         complexity O(c^2 * I * D * P), where c is the chunk size, I is the
         number of iterations, D is the number of dimensions, and P is the number
         of permutations. For chunking to be worth it you should have c^2 * I << n^2.
@@ -124,9 +122,10 @@ def pted(
     assert type(x) == type(y), f"x and y must be of the same type, not {type(x)} and {type(y)}"
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
     assert len(y.shape) >= 2, f"y must be at least 2D, not {y.shape}"
-    assert (chunk_size is not None) is (
-        chunk_iter is not None
-    ), "chunk_size and chunk_iter must both be provided for chunked PTED test"
+    if chunk_size is not None:
+        assert (
+            chunk_size <= max(len(x), len(y))
+        ), f"chunk_size ({chunk_size}) must be <= max(len(x), len(y)) ({max(len(x), len(y))})"
     assert (
         x.shape[1:] == y.shape[1:]
     ), f"x and y samples must have the same shape (past first dim), not {x.shape} and {y.shape}"
@@ -142,7 +141,6 @@ def pted(
             permutations=permutations,
             metric=metric,
             chunk_size=int(chunk_size),
-            chunk_iter=int(chunk_iter),
             prog_bar=prog_bar,
         )
     elif is_torch_tensor(x):
@@ -156,7 +154,6 @@ def pted(
             permutations=permutations,
             metric=metric,
             chunk_size=int(chunk_size),
-            chunk_iter=int(chunk_iter),
             prog_bar=prog_bar,
         )
     elif is_jax_array(x):
@@ -168,7 +165,6 @@ def pted(
             permutations=permutations,
             metric=metric,
             chunk_size=int(chunk_size),
-            chunk_iter=int(chunk_iter),
             prog_bar=prog_bar,
         )
     else:
@@ -200,7 +196,6 @@ def pted_coverage_test(
     warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
     chunk_size: Optional[int] = None,
-    chunk_iter: Optional[int] = None,
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
     pit_plot: Optional[str] = None,
@@ -269,10 +264,10 @@ def pted_coverage_test(
             (default: False)
         chunk_size (Optional[int]): If not None, use chunked energy distance
             estimation. This is useful for large datasets. The chunk size is the
-            number of samples to use for each chunk. If None, use the full
-            dataset.
-        chunk_iter (Optional[int]): The chunk iter is the number of iterations
-            to use with the given chunk size.
+            number of samples per chunk. The number of chunks is determined
+            automatically as ``max(len(x), len(y)) // chunk_size``, iterating
+            over the larger dataset once and cycling through the smaller one.
+            If None, use the full dataset.
         sbc_histogram (Optional[str]): If given, the path/filename to save a
             Simulation-Based-Calibration histogram.
         sbc_bins (Optional[int]): If given, force the histogram to have the provided
@@ -295,14 +290,13 @@ def pted_coverage_test(
         samples in x and y, D is the number of dimensions, and P is the number
         of permutations. For large datasets this can get unwieldy, so chunking
         is recommended. For chunking, the energy distance will be estimated at
-        each iteration rather than fully computed. To estimate the energy
-        distance, we take `chunk_size` sub-samples from x and y, and compute the
-        energy distance on those sub-samples. This is repeated `chunk_iter`
-        times, and the average is taken. This is a trade-off between speed and
-        accuracy. The larger the chunk size and larger chunk_iter, the more
-        accurate the estimate, but the slower the computation. PTED remains an
-        exact p-value test even when chunking, it simply becomes less sensitive
-        to the difference between x and y. The chunked pted test has time
+        each iteration rather than fully computed. The dataset is divided into
+        sequential chunks of size `chunk_size`; the number of chunks (iterations)
+        is ``max(len(x), len(y)) // chunk_size``, iterating over the larger
+        dataset once and cycling through the smaller one. The average energy
+        distance over all chunks is the final estimate. PTED remains an exact
+        p-value test even when chunking, it simply becomes less sensitive to
+        the difference between x and y. The chunked pted test has time
         complexity O(c^2 * I * D * P), where c is the chunk size, I is the
         number of iterations, D is the number of dimensions, and P is the number
         of permutations. For chunking to be worth it you should have c^2 * I << n^2.
@@ -328,7 +322,6 @@ def pted_coverage_test(
             return_all=True,
             two_tailed=False,
             chunk_size=chunk_size,
-            chunk_iter=chunk_iter,
         )
         test_stats.append(test)
         permute_stats.append(permute)

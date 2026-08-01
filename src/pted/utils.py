@@ -90,17 +90,20 @@ def _energy_distance_estimate_numpy(
     x: np.ndarray,
     y: np.ndarray,
     chunk_size: int,
-    chunk_iter: int,
     metric: Union[str, float] = "euclidean",
 ) -> float:
 
+    nx = len(x)
+    ny = len(y)
+    n_iter = max(nx, ny) // chunk_size
+
     E_est = []
-    for _ in range(chunk_iter):
-        # Randomly sample a chunk of data
-        idx = np.random.choice(len(x), size=min(len(x), chunk_size), replace=False)
-        x_chunk = x[idx]
-        idy = np.random.choice(len(y), size=min(len(y), chunk_size), replace=False)
-        y_chunk = y[idy]
+    for i in range(n_iter):
+        # Iterate over the larger dataset, cycling the smaller one
+        x_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % nx
+        y_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % ny
+        x_chunk = x[x_idx]
+        y_chunk = y[y_idx]
 
         # Compute the energy distance
         E_est.append(_energy_distance_numpy(x_chunk, y_chunk, metric=metric))
@@ -111,17 +114,20 @@ def _energy_distance_estimate_torch(
     x: torch.Tensor,
     y: torch.Tensor,
     chunk_size: int,
-    chunk_iter: int,
     metric: Union[str, float] = "euclidean",
 ) -> float:
 
+    nx = len(x)
+    ny = len(y)
+    n_iter = max(nx, ny) // chunk_size
+
     E_est = []
-    for _ in range(chunk_iter):
-        # Randomly sample a chunk of data
-        idx = np.random.choice(len(x), size=min(len(x), chunk_size), replace=False)
-        x_chunk = x[torch.tensor(idx)]
-        idy = np.random.choice(len(y), size=min(len(y), chunk_size), replace=False)
-        y_chunk = y[torch.tensor(idy)]
+    for i in range(n_iter):
+        # Iterate over the larger dataset, cycling the smaller one
+        x_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % nx
+        y_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % ny
+        x_chunk = x[torch.tensor(x_idx)]
+        y_chunk = y[torch.tensor(y_idx)]
 
         # Compute the energy distance
         E_est.append(_energy_distance_torch(x_chunk, y_chunk, metric=metric))
@@ -154,17 +160,20 @@ def _energy_distance_estimate_jax(
     x,
     y,
     chunk_size: int,
-    chunk_iter: int,
     metric: Union[str, float] = "euclidean",
 ) -> float:
 
+    nx = len(x)
+    ny = len(y)
+    n_iter = max(nx, ny) // chunk_size
+
     E_est = []
-    for _ in range(chunk_iter):
-        # Randomly sample a chunk of data
-        idx = np.random.choice(len(x), size=min(len(x), chunk_size), replace=False)
-        x_chunk = x[idx]
-        idy = np.random.choice(len(y), size=min(len(y), chunk_size), replace=False)
-        y_chunk = y[idy]
+    for i in range(n_iter):
+        # Iterate over the larger dataset, cycling the smaller one
+        x_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % nx
+        y_idx = np.arange(i * chunk_size, (i + 1) * chunk_size) % ny
+        x_chunk = x[x_idx]
+        y_chunk = y[y_idx]
 
         # Compute the energy distance
         E_est.append(_energy_distance_jax(x_chunk, y_chunk, metric=metric))
@@ -177,20 +186,19 @@ def pted_chunk_numpy(
     permutations: int = 100,
     metric: str = "euclidean",
     chunk_size: int = 100,
-    chunk_iter: int = 10,
     prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     assert np.all(np.isfinite(x)) and np.all(np.isfinite(y)), "Input contains NaN or Inf!"
     nx = len(x)
 
-    test_stat = _energy_distance_estimate_numpy(x, y, chunk_size, chunk_iter, metric=metric)
+    test_stat = _energy_distance_estimate_numpy(x, y, chunk_size, metric=metric)
     permute_stats = []
     for _ in trange(permutations, disable=not prog_bar):
         z = np.concatenate((x, y), axis=0)
         z = z[np.random.permutation(len(z))]
         x, y = z[:nx], z[nx:]
         permute_stats.append(
-            _energy_distance_estimate_numpy(x, y, chunk_size, chunk_iter, metric=metric)
+            _energy_distance_estimate_numpy(x, y, chunk_size, metric=metric)
         )
     return test_stat, permute_stats
 
@@ -201,7 +209,6 @@ def pted_chunk_torch(
     permutations: int = 100,
     metric: Union[str, float] = "euclidean",
     chunk_size: int = 100,
-    chunk_iter: int = 10,
     prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
@@ -210,14 +217,14 @@ def pted_chunk_torch(
     ), "Input contains NaN or Inf!"
     nx = len(x)
 
-    test_stat = _energy_distance_estimate_torch(x, y, chunk_size, chunk_iter, metric=metric)
+    test_stat = _energy_distance_estimate_torch(x, y, chunk_size, metric=metric)
     permute_stats = []
     for _ in trange(permutations, disable=not prog_bar):
         z = torch.cat((x, y), dim=0)
         z = z[torch.randperm(len(z))]
         x, y = z[:nx], z[nx:]
         permute_stats.append(
-            _energy_distance_estimate_torch(x, y, chunk_size, chunk_iter, metric=metric)
+            _energy_distance_estimate_torch(x, y, chunk_size, metric=metric)
         )
     return test_stat, permute_stats
 
@@ -309,21 +316,20 @@ def pted_chunk_jax(
     permutations: int = 100,
     metric: Union[str, float] = "euclidean",
     chunk_size: int = 100,
-    chunk_iter: int = 10,
     prog_bar: bool = False,
 ) -> tuple[float, list[float]]:
     assert jax is not None, "JAX is not installed! try: `pip install jax`"
     assert jnp.all(jnp.isfinite(x)) and jnp.all(jnp.isfinite(y)), "Input contains NaN or Inf!"
     nx = len(x)
 
-    test_stat = _energy_distance_estimate_jax(x, y, chunk_size, chunk_iter, metric=metric)
+    test_stat = _energy_distance_estimate_jax(x, y, chunk_size, metric=metric)
     permute_stats = []
     for _ in trange(permutations, disable=not prog_bar):
         z = jnp.concatenate([x, y], axis=0)
         z = z[np.random.permutation(len(z))]
         x, y = z[:nx], z[nx:]
         permute_stats.append(
-            _energy_distance_estimate_jax(x, y, chunk_size, chunk_iter, metric=metric)
+            _energy_distance_estimate_jax(x, y, chunk_size, metric=metric)
         )
     return test_stat, permute_stats
 

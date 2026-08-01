@@ -104,11 +104,11 @@ def test_pted_chunk_torch():
     D = 10
     x = torch.randn(1000, D)
     y = torch.randn(1000, D)
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y = torch.rand(1000, D)
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
@@ -119,11 +119,27 @@ def test_pted_chunk_numpy():
     D = 10
     x = np.random.normal(size=(1000, D))
     y = np.random.normal(size=(1000, D))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y = np.random.uniform(size=(1000, D))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
+
+
+def test_pted_chunk_mismatched_sizes():
+    """Chunked PTED correctly cycles the smaller dataset for mismatched x/y sizes."""
+    np.random.seed(0)
+    D = 5
+    # x has 800 samples, y has 300 samples; chunk_size=100 → 8 iterations, cycling y
+    x = np.random.normal(size=(800, D))
+    y = np.random.normal(size=(300, D))
+    p = pted.pted(x, y, chunk_size=100)
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
+
+    # Different distributions should give small p-value even with mismatched sizes
+    y_diff = np.random.uniform(size=(300, D))
+    p = pted.pted(x, y_diff, chunk_size=100)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
@@ -225,17 +241,17 @@ def test_pted_jax():
 def test_pted_chunk_jax():
     if jax is None:
         pytest.skip("jax not installed")
-    np.random.seed(42)
+    np.random.seed(0)
 
     # example 2 sample test
     D = 3
-    x = jnp.array(np.random.normal(size=(100, D)))
-    y = jnp.array(np.random.normal(size=(100, D)))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    x = jnp.array(np.random.normal(size=(200, D)))
+    y = jnp.array(np.random.normal(size=(200, D)))
+    p = pted.pted(x, y, chunk_size=50)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
-    y = jnp.array(np.random.uniform(size=(110, D)))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    y = jnp.array(np.random.uniform(size=(300, D)))
+    p = pted.pted(x, y, chunk_size=50)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
@@ -311,7 +327,7 @@ def test_energy_distance_estimate_jax():
     np.random.seed(0)
     x = jnp.array(np.random.normal(size=(100, 4)))
     y = jnp.array(np.random.normal(size=(100, 4)))
-    ed = pted.utils._energy_distance_estimate_jax(x, y, chunk_size=20, chunk_iter=5)
+    ed = pted.utils._energy_distance_estimate_jax(x, y, chunk_size=20)
     assert np.isfinite(ed)
 
 
@@ -391,7 +407,7 @@ def test_energy_distance_numpy_torch_jax_agree():
 
 
 def test_energy_distance_estimate_numpy_torch_jax_agree():
-    """_energy_distance_estimate_{numpy,torch,jax} return close values for the same seed/data."""
+    """_energy_distance_estimate_{numpy,torch,jax} return close values for the same data."""
     if torch is None:
         pytest.skip("torch not installed")
     if jax is None:
@@ -402,16 +418,13 @@ def test_energy_distance_estimate_numpy_torch_jax_agree():
     x_np = np.random.normal(size=(200, 5)).astype(np.float32)
     y_np = np.random.normal(size=(200, 5)).astype(np.float32)
 
-    # Run with the same seed so the same chunks are sampled
-    np.random.seed(0)
-    ed_numpy = pted.utils._energy_distance_estimate_numpy(x_np, y_np, chunk_size=50, chunk_iter=5)
-    np.random.seed(0)
+    # Deterministic sequential chunking: no seed needed
+    ed_numpy = pted.utils._energy_distance_estimate_numpy(x_np, y_np, chunk_size=50)
     ed_torch = pted.utils._energy_distance_estimate_torch(
-        torch.tensor(x_np), torch.tensor(y_np), chunk_size=50, chunk_iter=5
+        torch.tensor(x_np), torch.tensor(y_np), chunk_size=50
     )
-    np.random.seed(0)
     ed_jax = pted.utils._energy_distance_estimate_jax(
-        jnp.array(x_np), jnp.array(y_np), chunk_size=50, chunk_iter=5
+        jnp.array(x_np), jnp.array(y_np), chunk_size=50
     )
 
     assert ed_numpy == pytest.approx(
