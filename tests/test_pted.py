@@ -31,6 +31,7 @@ def test_inputs_extra_dims():
     if torch is None:
         pytest.skip("torch not installed")
     # Test with torch tensors
+    torch.manual_seed(42)
     g = torch.randn(100, 30, 30)
     s = torch.randn(50, 100, 30, 30)
     p = pted.pted_coverage_test(g, s)
@@ -84,6 +85,7 @@ def test_pted_torch():
 
 
 def test_pted_coverage_full():
+    np.random.seed(42)
     g = np.random.normal(size=(100, 10))  # ground truth (n_simulations, n_dimensions)
     s = np.random.normal(
         size=(200, 100, 10)
@@ -162,6 +164,7 @@ def test_pted_chunk_size_fallback():
 
 def test_pted_coverage_edgecase():
     # Test with single simulation
+    np.random.seed(42)
     g = np.random.normal(size=(1, 10))
     s = np.random.normal(size=(100, 1, 10))
     p = pted.pted_coverage_test(g, s)
@@ -169,6 +172,7 @@ def test_pted_coverage_edgecase():
 
 
 def test_pted_coverage_progress_bar(capsys):
+    np.random.seed(42)
     g = np.random.normal(size=(42, 10))
     s = np.random.normal(size=(100, 42, 10))
     pted.pted_coverage_test(g, s)
@@ -185,6 +189,7 @@ def test_pted_coverage_progress_bar(capsys):
 def test_pted_coverage_overunder():
     if torch is None:
         pytest.skip("torch not installed")
+    torch.manual_seed(42)
     g = torch.randn(100, 3)
     s = torch.randn(50, 100, 3)
     with pytest.warns(pted.utils.OverconfidenceWarning):
@@ -194,6 +199,7 @@ def test_pted_coverage_overunder():
 
 
 def test_sbc_histogram():
+    np.random.seed(42)
     g = np.random.normal(size=(100, 10))  # ground truth (nsim, ndim)
     s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
 
@@ -202,6 +208,7 @@ def test_sbc_histogram():
 
 
 def test_pit_plot_coverage_test():
+    np.random.seed(42)
     g = np.random.normal(size=(100, 10))  # ground truth (nsim, ndim)
     s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
 
@@ -212,6 +219,7 @@ def test_pit_plot_coverage_test():
 
 def test_pit_plot_utility_direct():
     """pit_plot utility function creates a file and handles edge cases."""
+    np.random.seed(42)
     pvals = np.random.uniform(size=50)
     pted.utils.pit_plot(pvals, "pit_direct.pdf")
     assert os.path.exists("pit_direct.pdf"), "PIT plot file was not created"
@@ -276,6 +284,7 @@ def test_pted_coverage_jax():
     if jax is None:
         pytest.skip("jax not installed")
 
+    np.random.seed(42)
     g = jnp.array(np.random.normal(size=(75, 5)))
     s = jnp.array(np.random.normal(size=(50, 75, 5)))
     p = pted.pted_coverage_test(g, s)
@@ -326,6 +335,7 @@ def test_energy_distance_jax():
     """_energy_distance_jax returns 0 when x and y are identical."""
     if jax is None:
         pytest.skip("jax not installed")
+    np.random.seed(42)
     x = jnp.array(np.random.normal(size=(50, 5)))
     # Identical samples means energy distance should be ~0
     ed = pted.utils._energy_distance_jax(x, x)

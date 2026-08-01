@@ -19,9 +19,11 @@ except ImportError:
 try:
     import jax
     import jax.numpy as jnp
+    from jax import jit
 except ImportError:
     jax = None
     jnp = None
+    jit = lambda *a, **k: lambda f: f  # type: ignore
 
 
 __all__ = (
@@ -123,14 +125,8 @@ def _energy_distance_estimate(
     return np.mean(E_est)
 
 
+@jit(static_argnames=["p"])
 def _jax_cdist(x, y, p: float = 2.0):
-    if p == 2.0:
-        # Squared-norm identity avoids materializing the (nx, ny, d) diff tensor.
-        # ||x_i - y_j||^2 = ||x_i||^2 + ||y_j||^2 - 2 * x_i . y_j
-        x_sq = jnp.sum(x**2, axis=-1)  # (nx,)
-        y_sq = jnp.sum(y**2, axis=-1)  # (ny,)
-        sq_dist = x_sq[:, None] + y_sq[None, :] - 2.0 * (x @ y.T)
-        return jnp.sqrt(jnp.maximum(sq_dist, 0.0))
     # For general p-norms use vmap to avoid the (nx, ny, d) intermediate.
     return jax.vmap(lambda xi: jnp.linalg.norm(xi - y, ord=p, axis=-1))(x)
 
@@ -160,13 +156,12 @@ def pted_chunk_numpy(
         x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_numpy
     )
     permute_stats = []
+    z = np.concatenate((x, y), axis=0)
     for _ in trange(permutations, disable=not prog_bar):
-        z = np.concatenate((x, y), axis=0)
         z = z[np.random.permutation(len(z))]
-        x, y = z[:nx], z[nx:]
         permute_stats.append(
             _energy_distance_estimate(
-                x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_numpy
+                z[:nx], z[nx:], chunk_size, metric=metric, energy_distance_fn=_energy_distance_numpy
             )
         )
     return test_stat, permute_stats
@@ -190,13 +185,12 @@ def pted_chunk_torch(
         x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_torch
     )
     permute_stats = []
+    z = torch.cat((x, y), dim=0)
     for _ in trange(permutations, disable=not prog_bar):
-        z = torch.cat((x, y), dim=0)
         z = z[torch.randperm(len(z))]
-        x, y = z[:nx], z[nx:]
         permute_stats.append(
             _energy_distance_estimate(
-                x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_torch
+                z[:nx], z[nx:], chunk_size, metric=metric, energy_distance_fn=_energy_distance_torch
             )
         )
     return test_stat, permute_stats
@@ -299,13 +293,12 @@ def pted_chunk_jax(
         x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_jax
     )
     permute_stats = []
+    z = jnp.concatenate([x, y], axis=0)
     for _ in trange(permutations, disable=not prog_bar):
-        z = jnp.concatenate([x, y], axis=0)
         z = z[np.random.permutation(len(z))]
-        x, y = z[:nx], z[nx:]
         permute_stats.append(
             _energy_distance_estimate(
-                x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_jax
+                z[:nx], z[nx:], chunk_size, metric=metric, energy_distance_fn=_energy_distance_jax
             )
         )
     return test_stat, permute_stats
