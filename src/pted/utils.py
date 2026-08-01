@@ -89,24 +89,18 @@ def _energy_distance_torch(
 def _chunk_slices(lenx: int, leny: int, chunk_size: int):
     """Yield slices for chunking two arrays of lengths lenx and leny.
 
-    The smaller of the two is tiled along axis 0 as needed so that both arrays
-    are at least ``n_iter * chunk_size`` rows long before the loop begins.
+    The smaller of the two is cycled while the larger is iterated through
+    completely (minus the last incomplete chunk if any).
     """
     nx = max(1, lenx // chunk_size)
-    x_slices = []
-    for i in range(nx):
-        start = i * chunk_size
-        x_slices.append(slice(start, start + chunk_size))
-
-    y_slices = []
     ny = max(1, leny // chunk_size)
-    for i in range(ny):
-        start = i * chunk_size
-        y_slices.append(slice(start, start + chunk_size))
 
-    n_iter = max(lenx, leny) // chunk_size
-    for i in range(n_iter):
-        yield x_slices[i % nx], y_slices[i % ny]
+    for i in range(max(nx, ny)):
+        ix = i % nx
+        iy = i % ny
+        yield slice(ix * chunk_size, (ix + 1) * chunk_size), slice(
+            iy * chunk_size, (iy + 1) * chunk_size
+        )
 
 
 def _energy_distance_estimate(
