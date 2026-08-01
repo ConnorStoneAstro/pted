@@ -275,7 +275,6 @@ def pted(
     metric: Union[str, float] = "euclidean",
     return_all: bool = False,
     chunk_size: Optional[int] = None,
-    chunk_iter: Optional[int] = None,
     two_tailed: bool = True,
     prog_bar: bool = False,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
@@ -286,8 +285,7 @@ def pted(
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
 * **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf. When using JAX arrays, the metric is passed as the "ord" for jnp.linalg.norm and therefore is also a float.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
-* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
-* **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
+* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. The chunk size is the number of samples per chunk. The number of chunks is determined automatically as `max(len(x), len(y)) // chunk_size`, iterating over the larger dataset once and cycling through the smaller one. If `chunk_size >= len(x)` and `chunk_size >= len(y)`, PTED falls back to the full (non-chunked) computation. If None, use the full dataset.
 * **two_tailed** *(bool)*: if True, compute a two-tailed p-value. This is useful if you want to reject the null hypothesis when x and y are either too similar or too different. If False, only checks for dissimilarity but is more sensitive. Default is True.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of permutation tests. Default is False.
 
@@ -302,7 +300,6 @@ def pted_coverage_test(
     warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
     chunk_size: Optional[int] = None,
-    chunk_iter: Optional[int] = None,
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
     pit_plot: Optional[str] = None,
@@ -316,8 +313,7 @@ def pted_coverage_test(
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
 * **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf. When using JAX arrays, the metric is passed as the "ord" for jnp.linalg.norm and therefore is also a float.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
-* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. This is useful for large datasets. The chunk size is the number of samples to use for each chunk. If None, use the full dataset.
-* **chunk_iter** *(Optional[int])*: The chunk iter is the number of iterations to use with the given chunk size.
+* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. The chunk size is the number of samples per chunk. The number of chunks is determined automatically as `max(len(x), len(y)) // chunk_size`, iterating over the larger dataset once and cycling through the smaller one. If None, use the full dataset.
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
 * **pit_plot** *(Optional[str])*: If given, the path/filename to save a Probability Integral Transform (PIT) plot of the per-simulation p-values against the expected uniform distribution, with a shaded KS confidence band.
@@ -361,16 +357,20 @@ If a GPU isn't enough to get PTED running fast enough for you, or if you are
 running into memory limitations, there are still options! We can use an
 approximation of the energy distance, in this case the test is still exact but
 less sensitive than it would be otherwise. We can approximate the energy
-distance by taking random subsamples (chunks) of the full dataset, computing the
-energy distance, then averaging. Just set the `chunk_size` parameter for the
-number of samples you can manage at once and set the `chunk_iter` for the number
-of trials you want in the average. The larger these numbers are, the closer the
-estimate will be to the true energy distance, but it will take more compute.
-This lets you decide how to trade off compute for sensitivity.
+distance by iterating through sequential chunks of the full dataset, computing
+the energy distance on each chunk, then averaging. Just set the `chunk_size`
+parameter for the number of samples you can manage at once. The number of
+iterations is determined automatically as `max(len(x), len(y)) // chunk_size`,
+iterating over the larger dataset once and cycling through the smaller one if
+their sizes differ. The larger the chunk size, the closer the estimate will be
+to the true energy distance, but it will take more compute.
 
-Note that the computational complexity for standard PTED goes as 
-`O((n_samp_x + n_samp_y)^2)` while the chunked version goes as 
-`O(chunk_iter * (2 * chunk_size)^2)` so plan your chunking accordingly.
+Note that the computational complexity for standard PTED goes as `O((n_samp_x +
+n_samp_y)^2)` while the chunked version goes as `O(n_iter * (2 * chunk_size)^2)`
+where `n_iter = max(n_samp_x, n_samp_y) // chunk_size`, so plan your chunking
+accordingly. For a given chunk size, the computational complexity of PTED grows
+linearly with dataset size, much like other large scale (machine learning
+oriented) two sample tests.
 
 Example:
 ```python
@@ -380,7 +380,7 @@ import numpy as np
 x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
 y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
 
-p_value = pted(x, y, chunk_size = 50, chunk_iter = 100)
+p_value = pted(x, y, chunk_size = 50)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
 

@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
 
     steps:
@@ -51,15 +51,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-cov wheel
 
-      - name: Install torch # no torch on 3.11 to test no-torch scenario
-        if: ${{ matrix.python-version != '3.11' }}
+      - name: Install torch # no torch on 3.13 to test no-torch scenario
+        if: ${{ matrix.python-version != '3.13' }}
         run: |
           pip install torch
 
       # We only want to install this on one run, because otherwise we'll have
       # duplicate annotations.
       - name: Install error reporter
-        if: ${{ matrix.python-version == '3.10' }}
+        if: ${{ matrix.python-version == '3.13' }}
         run: |
           python -m pip install pytest-github-actions-annotate-failures
 

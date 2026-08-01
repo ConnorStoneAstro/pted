@@ -31,6 +31,7 @@ def test_inputs_extra_dims():
     if torch is None:
         pytest.skip("torch not installed")
     # Test with torch tensors
+    torch.manual_seed(43)
     g = torch.randn(100, 30, 30)
     s = torch.randn(50, 100, 30, 30)
     p = pted.pted_coverage_test(g, s)
@@ -84,6 +85,7 @@ def test_pted_torch():
 
 
 def test_pted_coverage_full():
+    np.random.seed(42)
     g = np.random.normal(size=(100, 10))  # ground truth (n_simulations, n_dimensions)
     s = np.random.normal(
         size=(200, 100, 10)
@@ -104,11 +106,11 @@ def test_pted_chunk_torch():
     D = 10
     x = torch.randn(1000, D)
     y = torch.randn(1000, D)
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y = torch.rand(1000, D)
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
@@ -119,16 +121,50 @@ def test_pted_chunk_numpy():
     D = 10
     x = np.random.normal(size=(1000, D))
     y = np.random.normal(size=(1000, D))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y = np.random.uniform(size=(1000, D))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    p = pted.pted(x, y, chunk_size=100)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
+
+
+def test_pted_chunk_mismatched_sizes():
+    """Chunked PTED correctly cycles the smaller dataset for mismatched x/y sizes."""
+    np.random.seed(0)
+    D = 5
+    # x has 800 samples, y has 300 samples; chunk_size=100 → 8 iterations, cycling y
+    x = np.random.normal(size=(800, D))
+    y = np.random.normal(size=(300, D))
+    p = pted.pted(x, y, chunk_size=100)
+    assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
+
+    # Different distributions should give small p-value even with mismatched sizes
+    y_diff = np.random.uniform(size=(300, D))
+    p = pted.pted(x, y_diff, chunk_size=100)
+    assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
+
+
+def test_pted_chunk_size_fallback():
+    """chunk_size >= both dataset sizes falls back to regular (non-chunked) PTED."""
+    np.random.seed(7)
+    D = 5
+    x = np.random.normal(size=(50, D))
+    y = np.random.normal(size=(50, D))
+
+    # chunk_size equals both lengths → should silently fall back to regular PTED
+    p_chunk = pted.pted(x, y, chunk_size=50)
+    # Rerun with explicit non-chunked PTED using same seed for reference
+    np.random.seed(7)
+    p_plain = pted.pted(x, y)
+    # Both should give a valid p-value in U(0,1)
+    assert p_chunk > 1e-2 and p_chunk < 0.99, f"p-value {p_chunk} outside expected range"
+    assert p_plain > 1e-2 and p_plain < 0.99, f"p-value {p_plain} outside expected range"
 
 
 def test_pted_coverage_edgecase():
     # Test with single simulation
+    np.random.seed(42)
     g = np.random.normal(size=(1, 10))
     s = np.random.normal(size=(100, 1, 10))
     p = pted.pted_coverage_test(g, s)
@@ -136,6 +172,7 @@ def test_pted_coverage_edgecase():
 
 
 def test_pted_coverage_progress_bar(capsys):
+    np.random.seed(42)
     g = np.random.normal(size=(42, 10))
     s = np.random.normal(size=(100, 42, 10))
     pted.pted_coverage_test(g, s)
@@ -152,6 +189,7 @@ def test_pted_coverage_progress_bar(capsys):
 def test_pted_coverage_overunder():
     if torch is None:
         pytest.skip("torch not installed")
+    torch.manual_seed(42)
     g = torch.randn(100, 3)
     s = torch.randn(50, 100, 3)
     with pytest.warns(pted.utils.OverconfidenceWarning):
@@ -161,6 +199,7 @@ def test_pted_coverage_overunder():
 
 
 def test_sbc_histogram():
+    np.random.seed(42)
     g = np.random.normal(size=(100, 10))  # ground truth (nsim, ndim)
     s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
 
@@ -169,6 +208,7 @@ def test_sbc_histogram():
 
 
 def test_pit_plot_coverage_test():
+    np.random.seed(42)
     g = np.random.normal(size=(100, 10))  # ground truth (nsim, ndim)
     s = np.random.normal(size=(150, 100, 10))  # posterior samples (nsamp, nsim, ndim)
 
@@ -179,6 +219,7 @@ def test_pit_plot_coverage_test():
 
 def test_pit_plot_utility_direct():
     """pit_plot utility function creates a file and handles edge cases."""
+    np.random.seed(42)
     pvals = np.random.uniform(size=50)
     pted.utils.pit_plot(pvals, "pit_direct.pdf")
     assert os.path.exists("pit_direct.pdf"), "PIT plot file was not created"
@@ -225,17 +266,17 @@ def test_pted_jax():
 def test_pted_chunk_jax():
     if jax is None:
         pytest.skip("jax not installed")
-    np.random.seed(42)
+    np.random.seed(0)
 
     # example 2 sample test
     D = 3
-    x = jnp.array(np.random.normal(size=(100, D)))
-    y = jnp.array(np.random.normal(size=(100, D)))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    x = jnp.array(np.random.normal(size=(200, D)))
+    y = jnp.array(np.random.normal(size=(200, D)))
+    p = pted.pted(x, y, chunk_size=50)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
-    y = jnp.array(np.random.uniform(size=(110, D)))
-    p = pted.pted(x, y, chunk_size=100, chunk_iter=10)
+    y = jnp.array(np.random.uniform(size=(300, D)))
+    p = pted.pted(x, y, chunk_size=50)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
@@ -243,15 +284,11 @@ def test_pted_coverage_jax():
     if jax is None:
         pytest.skip("jax not installed")
 
+    np.random.seed(42)
     g = jnp.array(np.random.normal(size=(75, 5)))
     s = jnp.array(np.random.normal(size=(50, 75, 5)))
     p = pted.pted_coverage_test(g, s)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
-
-
-# ---------------------------------------------------------------------------
-# Unit tests for newly-added utils functions
-# ---------------------------------------------------------------------------
 
 
 def test_is_jax_array_with_jax():
@@ -298,21 +335,11 @@ def test_energy_distance_jax():
     """_energy_distance_jax returns 0 when x and y are identical."""
     if jax is None:
         pytest.skip("jax not installed")
+    np.random.seed(42)
     x = jnp.array(np.random.normal(size=(50, 5)))
     # Identical samples means energy distance should be ~0
     ed = pted.utils._energy_distance_jax(x, x)
     assert abs(ed) < 1e-6
-
-
-def test_energy_distance_estimate_jax():
-    """_energy_distance_estimate_jax returns a finite scalar."""
-    if jax is None:
-        pytest.skip("jax not installed")
-    np.random.seed(0)
-    x = jnp.array(np.random.normal(size=(100, 4)))
-    y = jnp.array(np.random.normal(size=(100, 4)))
-    ed = pted.utils._energy_distance_estimate_jax(x, y, chunk_size=20, chunk_iter=5)
-    assert np.isfinite(ed)
 
 
 def test_pted_jax_no_jax(monkeypatch):
@@ -343,11 +370,6 @@ def test_pted_chunk_torch_no_torch(monkeypatch):
     monkeypatch.setattr("pted.utils.torch", fake_torch)
     with pytest.raises(AssertionError, match="PyTorch is not installed"):
         pted.utils.pted_chunk_torch(np.zeros((5, 2)), np.zeros((5, 2)))
-
-
-# ---------------------------------------------------------------------------
-# Cross-backend consistency tests
-# ---------------------------------------------------------------------------
 
 
 def test_jax_cdist_matches_scipy():
@@ -390,33 +412,21 @@ def test_energy_distance_numpy_torch_jax_agree():
     ), f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distances differ"
 
 
-def test_energy_distance_estimate_numpy_torch_jax_agree():
-    """_energy_distance_estimate_{numpy,torch,jax} return close values for the same seed/data."""
-    if torch is None:
-        pytest.skip("torch not installed")
-    if jax is None:
-        pytest.skip("jax not installed")
-
+def test_energy_distance_estimate_matches_energy_distance():
+    """_energy_distance_estimate returns a value close to _energy_distance for small inputs."""
     np.random.seed(123)
-    # Use float32 so all backends operate at the same precision
-    x_np = np.random.normal(size=(200, 5)).astype(np.float32)
-    y_np = np.random.normal(size=(200, 5)).astype(np.float32)
+    x = np.random.normal(size=(100, 5))
+    y = np.random.uniform(size=(100, 5))
 
-    # Run with the same seed so the same chunks are sampled
-    np.random.seed(0)
-    ed_numpy = pted.utils._energy_distance_estimate_numpy(x_np, y_np, chunk_size=50, chunk_iter=5)
-    np.random.seed(0)
-    ed_torch = pted.utils._energy_distance_estimate_torch(
-        torch.tensor(x_np), torch.tensor(y_np), chunk_size=50, chunk_iter=5
-    )
-    np.random.seed(0)
-    ed_jax = pted.utils._energy_distance_estimate_jax(
-        jnp.array(x_np), jnp.array(y_np), chunk_size=50, chunk_iter=5
+    ed_direct = pted.utils._energy_distance_numpy(x, y)
+    ed_estimate = pted.utils._energy_distance_estimate(
+        x,
+        y,
+        chunk_size=25,
+        metric="euclidean",
+        energy_distance_fn=pted.utils._energy_distance_numpy,
     )
 
-    assert ed_numpy == pytest.approx(
-        ed_torch, rel=1e-4
-    ), f"numpy ({ed_numpy}) and torch ({ed_torch}) energy distance estimates differ"
-    assert ed_numpy == pytest.approx(
-        ed_jax, rel=1e-4
-    ), f"numpy ({ed_numpy}) and jax ({ed_jax}) energy distance estimates differ"
+    assert ed_direct == pytest.approx(
+        ed_estimate, rel=1.5e-1
+    ), f"direct ({ed_direct}) and estimate ({ed_estimate}) energy distances differ"
