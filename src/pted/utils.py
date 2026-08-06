@@ -484,8 +484,8 @@ def hdp_coverage_test(
     uniformly distributed.
 
     Args:
-        ground_truth: The true parameter posterior density values, shape (Nsim,)
-        posterior_samples: The posterior samples density values, shape (Nsamp, Nsim)
+        ground_truth: Posterior density (or log density) at the ground-truth parameters, shape (Nsim,)
+        posterior_samples: Posterior density (or log density) for each posterior draw, shape (Nsamp, Nsim)
         two_tailed: Whether to compute a two-tailed p-value (default: True)
 
     Returns:

@@ -169,8 +169,8 @@ the ground truth[^3]. The package has a quick tool to let you do that:
 ```python
 from pted import hdp_coverage_test
 
-ground_truth = np.uniform(100) # Nsim
-posterior_samples = np.uniform((200, 100)) # Nsamp, Nsim
+ground_truth = np.random.uniform(100) # Nsim
+posterior_samples = np.random.uniform((200, 100)) # Nsamp, Nsim
 
 p_value = hdp_coverage_test(ground_truth, posterior_samples, two_tailed = True)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
