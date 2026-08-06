@@ -305,6 +305,7 @@ def pted_chunk_jax(
 
 
 def two_tailed_p(chi2, df):
+    assert df > 2, "Degrees of freedom must be greater than 2 for two-tailed p-value calculation."
     p_left = chi2_dist.cdf(chi2, df)
     p_right = chi2_dist.sf(chi2, df)
     return 2 * min(p_left, p_right)
