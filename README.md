@@ -157,6 +157,24 @@ test on this chi2 distribution meaning that if your posterior is underconfident
 or overconfident, you will get a small p-value that can be used to reject the
 null.
 
+#### If you have posterior densities
+
+If you have posterior densities (and you trust them), then chances are the HDP
+region coverage test is a more powerful test. Essentially, instead of using a
+permutation test to determine the p-value for a single simulation, you just
+determine the fraction of posterior samples with higher posterior density than
+the ground truth[^3]. The package has a quick tool to let you do that:
+
+```python
+from pted import hdp_coverage_test
+
+ground_truth = np.uniform(100) # Nsim
+posterior_samples = np.uniform((200, 100)) # Nsamp, Nsim
+
+p_value = hdp_coverage_test(ground_truth, posterior_samples, two_tailed = True)
+print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
+```
+
 ## Example: Sensitivity comparison with KS-test
 
 There is no single universally optimal two sample test, but a widely used method
@@ -259,7 +277,7 @@ could not find any significant discrepancies. The samples could have been drawn
 from the same distribution, or PTED could be insensitive to the deviation, or
 maybe the test needs more samples. In some sense PTED (like all null hypothesis
 tests) is "necessary but not sufficient" in that failing the test is bad news
-for the null, but passing the test is possibly inconclusive[^3]. Use your judgement,
+for the null, but passing the test is possibly inconclusive[^4]. Use your judgement,
 and contact me or some smarter stat-oriented person if you are unsure about the
 results you are getting!
 
@@ -491,4 +509,5 @@ If you think those are neat, then you'll probably also like this paper, which us
 
 [^1]: See the Simulation-Based Calibration paper by Talts et al. 2018 for what "SBC" is.
 [^2]: Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
-[^3]: actual "necessary but not sufficient" conditions are a different thing than null hypothesis tests, but they have a similar intuitive meaning.
+[^3]: Actually, we take (q + 1) / (Nsamp + 1) rather than q/Nsamp where q is the number of posterior samples with posterior density greater than the ground truth. This just turns out to be a better estimator for finite Nsamp.
+[^4]: actual "necessary but not sufficient" conditions are a different thing than null hypothesis tests, but they have a similar intuitive meaning.

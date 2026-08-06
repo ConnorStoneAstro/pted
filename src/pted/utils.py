@@ -305,31 +305,38 @@ def pted_chunk_jax(
 
 
 def two_tailed_p(chi2, df):
-    assert df > 2, "Degrees of freedom must be greater than 2 for two-tailed p-value calculation."
-    alpha = chi2_dist.pdf(chi2, df)
-    mode = df - 2
+    p_left = chi2_dist.cdf(chi2, df)
+    p_right = chi2_dist.sf(chi2, df)
+    return 2 * min(p_left, p_right)
 
-    if np.isclose(chi2, mode):
-        return 1.0
 
-    def root_eq(x):
-        return chi2_dist.pdf(x, df) - alpha
+###### This is a density based two tailed p-value, it is kept for reference but not used #######
+# def two_tailed_p(chi2, df):
+#     assert df > 2, "Degrees of freedom must be greater than 2 for two-tailed p-value calculation."
+#     alpha = chi2_dist.pdf(chi2, df)
+#     mode = df - 2
 
-    # Find left root
-    if chi2 < mode:
-        left = chi2_dist.cdf(chi2, df)
-    else:
-        res_left = root_scalar(root_eq, bracket=[0, mode], method="brentq")
-        left = chi2_dist.cdf(res_left.root, df)
+#     if np.isclose(chi2, mode):
+#         return 1.0
 
-    # Find right root
-    if chi2 > mode:
-        right = chi2_dist.sf(chi2, df)
-    else:
-        res_right = root_scalar(root_eq, bracket=[mode, 10000 * df], method="brentq")
-        right = chi2_dist.sf(res_right.root, df)
+#     def root_eq(x):
+#         return chi2_dist.pdf(x, df) - alpha
 
-    return left + right
+#     # Find left root
+#     if chi2 < mode:
+#         left = chi2_dist.cdf(chi2, df)
+#     else:
+#         res_left = root_scalar(root_eq, bracket=[0, mode], method="brentq")
+#         left = chi2_dist.cdf(res_left.root, df)
+
+#     # Find right root
+#     if chi2 > mode:
+#         right = chi2_dist.sf(chi2, df)
+#     else:
+#         res_right = root_scalar(root_eq, bracket=[mode, 10000 * df], method="brentq")
+#         right = chi2_dist.sf(res_right.root, df)
+
+#     return left + right
 
 
 class OverconfidenceWarning(UserWarning):
@@ -462,3 +469,34 @@ def pit_plot(pvals, saveto, confidence=0.95):
     ax.legend()
     fig.savefig(saveto, bbox_inches="tight")
     plt.close(fig)
+
+
+def hdp_coverage_test(
+    ground_truth: np.ndarray, posterior_samples: np.ndarray, two_tailed: bool = True
+) -> float:
+    """
+    Perform a Highest Density Posterior (HDP) coverage test. Essentially this
+    rank orders the posterior samples by their posterior density and also places
+    the ground truth in that ranking. The fraction of posterior samples with
+    higher density than the ground truth forms a p-value under the null
+    hypothesis. For many repeated experiments, we check that the p-values are
+    uniformly distributed.
+
+    Args:
+        ground_truth: The true parameter posterior density values, shape (Nsim,)
+        posterior_samples: The posterior samples density values, shape (Nsamp, Nsim)
+        two_tailed: Whether to compute a two-tailed p-value (default: True)
+
+    Returns:
+        pvalue: The p-value for the coverage test
+    """
+    from scipy.stats import chi2 as chi2_dist
+
+    Nsamp, Nsim = posterior_samples.shape
+    q = np.sum(posterior_samples >= ground_truth[None], axis=0)
+    chi2_hdp = -2 * np.sum(np.log((q + 1) / (Nsamp + 1)))
+    pvalue_right = chi2_dist.sf(chi2_hdp, 2 * Nsim)
+    pvalue_left = chi2_dist.cdf(chi2_hdp, 2 * Nsim)
+    if two_tailed:
+        return 2 * min(pvalue_left, pvalue_right)
+    return pvalue_right

@@ -2,7 +2,12 @@ import sys, os
 
 import numpy as np
 
-from pted.utils import two_tailed_p, simulation_based_calibration_histogram, pit_plot
+from pted.utils import (
+    two_tailed_p,
+    simulation_based_calibration_histogram,
+    pit_plot,
+    hdp_coverage_test,
+)
 
 import pytest
 
@@ -41,3 +46,24 @@ def test_pit_plot_no_matplotlib(monkeypatch):
 
     with pytest.warns(UserWarning, match="matplotlib"):
         pit_plot(pvals, "pit_no_mpl.pdf")
+
+
+def test_hdp_coverage_test():
+    np.random.seed(42)
+    # Null is true
+    ground_truth = np.random.normal(loc=0, scale=1, size=128)
+    posterior_samples = np.random.normal(loc=0, scale=1, size=(1024, 128))
+    pvalue = hdp_coverage_test(ground_truth, posterior_samples)
+    assert 1e-3 <= pvalue <= 0.999, "p-value should be between 0 and 1"
+
+    # Posterior is biased
+    posterior_samples = np.random.normal(loc=5, scale=1, size=(1024, 128))
+    pvalue = hdp_coverage_test(ground_truth, posterior_samples)
+    assert pvalue < 0.01, "p-value should be small for poorly calibrated posterior samples"
+
+    # Posterior is underconfident
+    posterior_samples = np.random.normal(loc=0, scale=2, size=(1024, 128))
+    pvalue = hdp_coverage_test(ground_truth, posterior_samples)
+    assert pvalue < 0.01, "p-value should be small for poorly calibrated posterior samples"
+    pvalue = hdp_coverage_test(ground_truth, posterior_samples, two_tailed=False)
+    assert pvalue > 0.01, "p-value should not be small for underconfident and one_tailed test"
