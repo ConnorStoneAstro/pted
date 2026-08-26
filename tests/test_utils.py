@@ -7,7 +7,21 @@ from pted.utils import (
     simulation_based_calibration_histogram,
     pit_plot,
     hdp_coverage_test,
+    _to_scalar,
+    _random_permutation,
 )
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError:
+    jax = None
+    jnp = None
 
 import pytest
 
@@ -64,3 +78,43 @@ def test_hdp_coverage_test():
     assert pvalue < 0.01, "p-value should be small for poorly calibrated posterior samples"
     pvalue = hdp_coverage_test(ground_truth, posterior_samples, two_tailed=False)
     assert pvalue > 0.01, "p-value should not be small for underconfident and one_tailed test"
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_to_scalar(backend):
+    if backend == "torch" and torch is None:
+        pytest.skip("torch not installed")
+    if backend == "jax" and jax is None:
+        pytest.skip("jax not installed")
+
+    if backend == "numpy":
+        x = np.array(5)
+
+    elif backend == "torch":
+        x = torch.tensor(5)
+
+    elif backend == "jax":
+        x = jnp.array(5)
+
+    # Test with scalar
+    assert _to_scalar(x) == 5
+
+
+@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
+def test_random_permutation(backend):
+    if backend == "torch" and torch is None:
+        pytest.skip("torch not installed")
+    if backend == "jax" and jax is None:
+        pytest.skip("jax not installed")
+
+    D = np.arange(16).reshape(4, 4)
+    if backend == "torch":
+        D = torch.tensor(D)
+    elif backend == "jax":
+        D = jnp.array(D)
+
+    permuted_D = _random_permutation(D, backend=backend)
+
+    assert set(permuted_D.flatten()) == set(
+        D.flatten()
+    ), "Permutation should contain all original elements"

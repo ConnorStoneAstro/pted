@@ -34,6 +34,7 @@ __all__ = (
     "confidence_alert",
     "simulation_based_calibration_histogram",
     "pit_plot",
+    "hdp_coverage_test",
 )
 
 
@@ -86,6 +87,14 @@ def _to_scalar(x, backend: str) -> float:
     return float(x)
 
 
+def _to_backend(x, backend: str):
+    if backend == "torch":
+        return torch.as_tensor(x)
+    if backend == "jax":
+        return jnp.asarray(x)
+    return np.asarray(x)
+
+
 def _random_permutation(D, backend: str = "numpy"):
     if backend == "torch":
         I = torch.randperm(D.shape[0], device=D.device)
@@ -93,8 +102,6 @@ def _random_permutation(D, backend: str = "numpy"):
         I = jax.random.permutation(jax.random.PRNGKey(np.random.randint(0, 1e6)), D.shape[0])
     else:
         I = np.random.permutation(D.shape[0])
-    if len(D.shape) == 1:
-        return D[I]
     return D[I][:, I]
 
 
@@ -220,7 +227,7 @@ def pted_chunk(
             ]
         )
     )
-    dmatrix = _cdist(z, z[landmark_pos], backend)
+    dmatrix = _cdist(z, z[_to_backend(landmark_pos, backend)], backend)
     assert _all_finite(
         dmatrix, backend
     ), "Distance matrix contains NaN or Inf! Consider normalizing values to be more stable (i.e. z-score norm)."
@@ -236,7 +243,7 @@ def pted_chunk(
             # Track where each landmark moved to, then re-split columns by their new x/y side.
             landmark_pos = np.argsort(I)[landmark_pos]
             order = np.argsort(landmark_pos >= nx, kind="stable")
-            dmatrix_i = dmatrix[I][:, order]
+            dmatrix_i = dmatrix[_to_backend(I, backend)][:, _to_backend(order, backend)]
             landmark_pos = landmark_pos[order]
             nxc_i = int(np.sum(landmark_pos < nx))
             nyc_i = nxc + nyc - nxc_i
