@@ -3,14 +3,8 @@ from typing import Union, Optional
 import numpy as np
 
 from .utils import (
-    is_torch_tensor,
-    is_jax_array,
-    pted_torch,
-    pted_numpy,
-    pted_chunk_torch,
-    pted_chunk_numpy,
-    pted_jax,
-    pted_chunk_jax,
+    pted as _pted_impl,
+    pted_chunk as _pted_chunk_impl,
     two_tailed_p,
     confidence_alert,
     simulation_based_calibration_histogram,
@@ -24,7 +18,6 @@ def pted(
     x: Union[np.ndarray, "Tensor", "jax.Array"],
     y: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
-    metric: Union[str, float] = "euclidean",
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     two_tailed: bool = True,
@@ -32,7 +25,7 @@ def pted(
 ) -> Union[float, tuple[float, np.ndarray, float]]:
     """
     Two sample null hypothesis test using a permutation test on the energy
-    distance.
+    distance (Euclidean).
 
     A "two sample test" is a statistical test that compares two samples to
     determine if they come from the same distribution. The null hypothesis is
@@ -79,22 +72,17 @@ def pted(
         y (Union[np.ndarray, Tensor, jax.Array]): second set of samples. Shape (M, *D)
         permutations (int): number of permutations to run. This determines how
             accurately the p-value is computed.
-        metric (Union[str, float]): distance metric to use. For NumPy inputs,
-            see scipy.spatial.distance.cdist for available metrics. For PyTorch
-            inputs, the metric is passed as the "p" argument to torch.cdist and
-            therefore is a float from 0 to inf. For JAX inputs, "euclidean" uses
-            the squared-norm identity (p=2), and any float p uses
-            jnp.linalg.norm with ord=p; string metrics other than "euclidean"
-            are not supported for JAX.
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value.
             bool (default: False)
-        chunk_size (Optional[int]): if not None, use chunked energy distance
-            estimation. This is useful for large datasets. The chunk size is the
-            number of samples per chunk. The number of chunks is determined
-            automatically as ``max(len(x), len(y)) // chunk_size``, iterating
-            over the larger dataset once and cycling through the smaller one.
-            If None, use the full dataset.
+        chunk_size (Optional[int]): if not None, use a landmark-based
+            rectangular distance matrix to estimate the energy distance
+            instead of the full pairwise matrix. ``nxc = min(chunk_size,
+            len(x))`` samples from x and ``nyc = min(chunk_size, len(y))``
+            samples from y are used as fixed "landmarks"; only distances from
+            every sample to these landmarks are computed. If ``chunk_size``
+            covers both full datasets, this falls back to the exact
+            (non-chunked) computation. If None, use the full dataset.
         two_tailed (bool): if True, compute a two-tailed p-value. This is useful
             if you want to reject the null hypothesis when x and y are either
             too similar or too different. Default is True.
@@ -104,20 +92,20 @@ def pted(
 
     Note
     ----
-        PTED has O(n^2 * D * P) time complexity, where n is the number of
-        samples in x and y, D is the number of dimensions, and P is the number
-        of permutations. For large datasets this can get unwieldy, so chunking
-        is recommended. For chunking, the energy distance will be estimated at
-        each iteration rather than fully computed. The dataset is divided into
-        sequential chunks of size `chunk_size`; the number of chunks (iterations)
-        is ``max(len(x), len(y)) // chunk_size``, iterating over the larger
-        dataset once and cycling through the smaller one. The average energy
-        distance over all chunks is the final estimate. PTED remains an exact
-        p-value test even when chunking, it simply becomes less sensitive to
-        the difference between x and y. The chunked pted test has time
-        complexity O(c^2 * I * D * P), where c is the chunk size, I is the
-        number of iterations, D is the number of dimensions, and P is the number
-        of permutations. For chunking to be worth it you should have c^2 * I << n^2.
+        PTED has O(n^2 * D) time complexity to build the distance matrix,
+        where n is the number of samples in x and y and D is the number of
+        dimensions; each of the P permutations then costs O(n^2) to
+        re-evaluate the test statistic from the re-indexed matrix. For large
+        datasets this can get unwieldy, so chunking is recommended. When
+        chunking, only a rectangular ``(n, nxc + nyc)`` matrix of distances
+        from every sample to a fixed set of landmark samples is computed, so
+        this matrix is built in O(n * nc * D) time, where ``nc = nxc + nyc``.
+        The permutation distribution is then obtained by re-indexing (permuting)
+        the rows of this matrix, which costs O(n * nc) per permutation and
+        never recomputes distances. PTED remains an exact p-value test even
+        when chunking, it simply becomes less sensitive to the difference
+        between x and y as ``chunk_size`` shrinks relative to ``len(x)`` and
+        ``len(y)``.
     """
     assert type(x) == type(y), f"x and y must be of the same type, not {type(x)} and {type(y)}"
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
@@ -135,43 +123,16 @@ def pted(
     if len(y.shape) > 2:
         y = y.reshape(y.shape[0], -1)
 
-    if is_torch_tensor(x) and chunk_size is not None:
-        test, permute = pted_chunk_torch(
+    if chunk_size is not None:
+        test, permute = _pted_chunk_impl(
             x,
             y,
             permutations=permutations,
-            metric=metric,
-            chunk_size=int(chunk_size),
-            prog_bar=prog_bar,
-        )
-    elif is_torch_tensor(x):
-        test, permute = pted_torch(
-            x, y, permutations=permutations, metric=metric, prog_bar=prog_bar
-        )
-    elif is_jax_array(x) and chunk_size is not None:
-        test, permute = pted_chunk_jax(
-            x,
-            y,
-            permutations=permutations,
-            metric=metric,
-            chunk_size=int(chunk_size),
-            prog_bar=prog_bar,
-        )
-    elif is_jax_array(x):
-        test, permute = pted_jax(x, y, permutations=permutations, metric=metric, prog_bar=prog_bar)
-    elif chunk_size is not None:
-        test, permute = pted_chunk_numpy(
-            x,
-            y,
-            permutations=permutations,
-            metric=metric,
             chunk_size=int(chunk_size),
             prog_bar=prog_bar,
         )
     else:
-        test, permute = pted_numpy(
-            x, y, permutations=permutations, metric=metric, prog_bar=prog_bar
-        )
+        test, permute = _pted_impl(x, y, permutations=permutations, prog_bar=prog_bar)
 
     permute = np.array(permute)
 
@@ -193,7 +154,6 @@ def pted_coverage_test(
     g: Union[np.ndarray, "Tensor", "jax.Array"],
     s: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
-    metric: Union[str, float] = "euclidean",
     warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
     chunk_size: Optional[int] = None,
@@ -204,7 +164,7 @@ def pted_coverage_test(
     prog_bar: bool = False,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
     """
-    Coverage test using a permutation test on the energy distance.
+    Coverage test using a permutation test on the energy distance (Euclidean).
 
     A "coverage test" is a statistical test that determines if the posterior
     samples (s) cover the ground truth samples (g) with the correct uncertainty.
@@ -253,22 +213,17 @@ def pted_coverage_test(
         s (Union[np.ndarray, Tensor, jax.Array]): Posterior samples. Shape (n_samples, n_sims, *D)
         permutations (int): number of permutations to run. This determines how
             accurately the p-value is computed.
-        metric (Union[str, float]): distance metric to use. For NumPy inputs,
-            see scipy.spatial.distance.cdist for available metrics. For PyTorch
-            inputs, the metric is passed as the "p" argument to torch.cdist and
-            therefore is a float from 0 to inf. For JAX inputs, "euclidean" uses
-            the squared-norm identity (p=2), and any float p uses
-            jnp.linalg.norm with ord=p; string metrics other than "euclidean"
-            are not supported for JAX.
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value. bool
             (default: False)
-        chunk_size (Optional[int]): If not None, use chunked energy distance
-            estimation. This is useful for large datasets. The chunk size is the
-            number of samples per chunk. The number of chunks is determined
-            automatically as ``max(len(x), len(y)) // chunk_size``, iterating
-            over the larger dataset once and cycling through the smaller one.
-            If None, use the full dataset.
+        chunk_size (Optional[int]): If not None, use a landmark-based
+            rectangular distance matrix to estimate the energy distance
+            instead of the full pairwise matrix. ``nxc = min(chunk_size,
+            len(x))`` samples from x and ``nyc = min(chunk_size, len(y))``
+            samples from y are used as fixed "landmarks"; only distances from
+            every sample to these landmarks are computed. If ``chunk_size``
+            covers both full datasets, this falls back to the exact
+            (non-chunked) computation. If None, use the full dataset.
         sbc_histogram (Optional[str]): If given, the path/filename to save a
             Simulation-Based-Calibration histogram.
         sbc_bins (Optional[int]): If given, force the histogram to have the provided
@@ -287,20 +242,20 @@ def pted_coverage_test(
 
     Note
     ----
-        PTED has O(n^2 * D * P) time complexity, where n is the number of
-        samples in x and y, D is the number of dimensions, and P is the number
-        of permutations. For large datasets this can get unwieldy, so chunking
-        is recommended. For chunking, the energy distance will be estimated at
-        each iteration rather than fully computed. The dataset is divided into
-        sequential chunks of size `chunk_size`; the number of chunks (iterations)
-        is ``max(len(x), len(y)) // chunk_size``, iterating over the larger
-        dataset once and cycling through the smaller one. The average energy
-        distance over all chunks is the final estimate. PTED remains an exact
-        p-value test even when chunking, it simply becomes less sensitive to
-        the difference between x and y. The chunked pted test has time
-        complexity O(c^2 * I * D * P), where c is the chunk size, I is the
-        number of iterations, D is the number of dimensions, and P is the number
-        of permutations. For chunking to be worth it you should have c^2 * I << n^2.
+        PTED has O(n^2 * D) time complexity to build the distance matrix,
+        where n is the number of samples in x and y and D is the number of
+        dimensions; each of the P permutations then costs O(n^2) to
+        re-evaluate the test statistic from the re-indexed matrix. For large
+        datasets this can get unwieldy, so chunking is recommended. When
+        chunking, only a rectangular ``(n, nxc + nyc)`` matrix of distances
+        from every sample to a fixed set of landmark samples is computed, so
+        this matrix is built in O(n * nc * D) time, where ``nc = nxc + nyc``.
+        The permutation distribution is then obtained by re-indexing (permuting)
+        the rows of this matrix, which costs O(n * nc) per permutation and
+        never recomputes distances. PTED remains an exact p-value test even
+        when chunking, it simply becomes less sensitive to the difference
+        between x and y as ``chunk_size`` shrinks relative to ``len(x)`` and
+        ``len(y)``.
     """
     nsamp, nsim, *_ = s.shape
     assert nsim > 0, "need some simulations to run test, got 0 simulations"
@@ -319,7 +274,6 @@ def pted_coverage_test(
             g[:, i],
             s[:, i],
             permutations=permutations,
-            metric=metric,
             return_all=True,
             two_tailed=False,
             chunk_size=chunk_size,

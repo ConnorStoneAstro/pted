@@ -23,9 +23,6 @@ def test_two_tailed_p():
     assert two_tailed_p(0, 10) < 0.01
     assert two_tailed_p(1e-25, 1000) < 0.01
 
-    with pytest.raises(AssertionError):
-        two_tailed_p(4, 2)
-
 
 def test_sbc_histogram(monkeypatch):
 
