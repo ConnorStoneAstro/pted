@@ -293,7 +293,7 @@ def test_cdist_matches_scipy(backend):
     y_np = np.random.normal(size=(8, 4)).astype(np.float32)
 
     expected = scipy_cdist(x_np, y_np, metric="euclidean")
-    got = np.array(
+    got = np.asarray(
         pted.utils._cdist(_to_backend(x_np, backend), _to_backend(y_np, backend), backend=backend)
     )
     assert np.allclose(got, expected, rtol=1e-5)

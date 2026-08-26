@@ -97,7 +97,7 @@ def test_to_scalar(backend):
         x = jnp.array(5)
 
     # Test with scalar
-    assert _to_scalar(x) == 5
+    assert _to_scalar(x, backend) == 5
 
 
 @pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
@@ -115,6 +115,6 @@ def test_random_permutation(backend):
 
     permuted_D = _random_permutation(D, backend=backend)
 
-    assert set(permuted_D.flatten()) == set(
-        D.flatten()
+    assert set(np.array(permuted_D.flatten()).tolist()) == set(
+        np.array(D.flatten()).tolist()
     ), "Permutation should contain all original elements"
