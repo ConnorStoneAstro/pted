@@ -131,10 +131,10 @@ def _energy_distance_precompute(
     """
     nxc = nx if nxc is None else nxc
     nyc = ny if nyc is None else nyc
-    Exx = D[:nx, :nxc].sum() / (nx * nxc)
-    Eyy = D[nx:, nxc:].sum() / (ny * nyc)
-    Exy = (D[:nx, nxc:].sum() + D[nx:, :nxc].sum()) / (nx * nyc + ny * nxc)
-    return Exy - Exx - Eyy  # use Exy rather than 2*Exy since both blocks are included above
+Exx = D[:nx, :nxc].sum() / (nx * nxc)
+Eyy = D[nx:, nxc:].sum() / (ny * nyc)
+Exy = (D[:nx, nxc:].sum() + D[nx:, :nxc].sum()) / (nx * nyc + ny * nxc)
+return 2 * Exy - Exx - Eyy
 
 
 def pted(
