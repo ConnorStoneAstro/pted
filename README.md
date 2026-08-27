@@ -15,6 +15,8 @@ correctly calibrated type I error rate regardless of the data distribution.
 
 ![pted logo](media/pted_logo.png)
 
+> **NOTE:** PTED is basically just the Maximum Mean Discrepancy (MMD) except using the Euclidean distance as the kernel. It took me a while to realize this, and in the meantime I made a nice python package. So I consider it a win for everyone. 
+
 ## Install
 
 To install PTED, run the following:
@@ -55,6 +57,7 @@ PTED is useful for:
 * Evaluate if a simulator generates true "data-like" samples
 * PTED (or just the energy distance) can be a distance metric for Approximate Bayesian Computing posteriors
 * Check for drift in a time series, comparing samples before/after some cutoff time
+* The energy distance is differentiable, so it can be used to train machine learning algorithms
 
 And much more!
 
@@ -96,7 +99,7 @@ PTED uses the energy distance of the two samples `x` and `y`, this is computed a
 
 $$d = \frac{2}{n_xn_y}\sum_{i,j}||x_i - y_j|| - \frac{1}{n_x^2}\sum_{i,j}||x_i - x_j|| - \frac{1}{n_y^2}\sum_{i,j}||y_i - y_j||$$
 
-The energy distance measures distances between pairs of points. It becomes more
+The energy distance measures distances between pairs of points[^2]. It becomes more
 positive if the `x` and `y` samples tend to be further from each other than from
 themselves. We demonstrate this in the figure below, where the `x` samples are
 drawn from a (thick) circle, while the `y` samples are drawn from a (thick)
@@ -149,7 +152,7 @@ Internally, for each simulation separately we use PTED to compute a p-value,
 essentially asking the question "was ``g`` drawn from the distribution that
 generated ``s``?". Individually, these tests are possibly not especially
 informative (unless the sampler is really bad), however their p-values must have
-been drawn from ``U(0,1)`` under the null-hypothesis[^2]. Thus we just need a
+been drawn from ``U(0,1)`` under the null-hypothesis[^3]. Thus we just need a
 way to combine their statistical power. It turns out that for some ``p ~
 U(0,1)``, we have that ``- 2 ln(p)`` is chi2 distributed with ``dof = 2``. This
 means that we can sum the chi2 values for the PTED test on each simulation and
@@ -164,7 +167,7 @@ If you have posterior densities (and you trust them), then chances are the HDP
 region coverage test is a more powerful test. Essentially, instead of using a
 permutation test to determine the p-value for a single simulation, you just
 determine the fraction of posterior samples with higher posterior density than
-the ground truth[^3]. The package has a quick tool to let you do that:
+the ground truth[^4]. The package has a quick tool to let you do that:
 
 ```python
 from pted import hdp_coverage_test
@@ -278,7 +281,7 @@ could not find any significant discrepancies. The samples could have been drawn
 from the same distribution, or PTED could be insensitive to the deviation, or
 maybe the test needs more samples. In some sense PTED (like all null hypothesis
 tests) is "necessary but not sufficient" in that failing the test is bad news
-for the null, but passing the test is possibly inconclusive[^4]. Use your judgement,
+for the null, but passing the test is possibly inconclusive[^5]. Use your judgement,
 and contact me or some smarter stat-oriented person if you are unsure about the
 results you are getting!
 
@@ -291,7 +294,6 @@ def pted(
     x: Union[np.ndarray, "Tensor", "jax.Array"],
     y: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
-    metric: Union[str, float] = "euclidean",
     return_all: bool = False,
     chunk_size: Optional[int] = None,
     two_tailed: bool = True,
@@ -302,9 +304,8 @@ def pted(
 * **x** *(Union[np.ndarray, Tensor, jax.Array])*: first set of samples. Shape (N, *D)
 * **y** *(Union[np.ndarray, Tensor, jax.Array])*: second set of samples. Shape (M, *D)
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
-* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf. When using JAX arrays, the metric is passed as the "ord" for jnp.linalg.norm and therefore is also a float.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
-* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. The chunk size is the number of samples per chunk. The number of chunks is determined automatically as `max(len(x), len(y)) // chunk_size`, iterating over the larger dataset once and cycling through the smaller one. If `chunk_size >= len(x)` and `chunk_size >= len(y)`, PTED falls back to the full (non-chunked) computation. If None, use the full dataset.
+* **chunk_size** *(Optional[int])*: if not None, use a landmark-based rectangular distance matrix to estimate the energy distance instead of the full pairwise matrix. `nxc = min(chunk_size, len(x))` samples from x and `nyc = min(chunk_size, len(y))` samples from y are used as fixed "landmarks"; only distances from every sample to these landmarks are computed. If `chunk_size >= len(x)` and `chunk_size >= len(y)`, PTED falls back to the full (non-chunked) computation. If None, use the full dataset.
 * **two_tailed** *(bool)*: if True, compute a two-tailed p-value. This is useful if you want to reject the null hypothesis when x and y are either too similar or too different. If False, only checks for dissimilarity but is more sensitive. Default is True.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of permutation tests. Default is False.
 
@@ -315,7 +316,6 @@ def pted_coverage_test(
     g: Union[np.ndarray, "Tensor", "jax.Array"],
     s: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
-    metric: Union[str, float] = "euclidean",
     warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
     chunk_size: Optional[int] = None,
@@ -330,9 +330,8 @@ def pted_coverage_test(
 * **g** *(Union[np.ndarray, Tensor, jax.Array])*: Ground truth samples. Shape (n_sims, *D)
 * **s** *(Union[np.ndarray, Tensor, jax.Array])*: Posterior samples. Shape (n_samples, n_sims, *D)
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
-* **metric** *(Union[str, float])*: distance metric to use. See scipy.spatial.distance.cdist for the list of available metrics with numpy. See torch.cdist when using PyTorch, note that the metric is passed as the "p" for torch.cdist and therefore is a float from 0 to inf. When using JAX arrays, the metric is passed as the "ord" for jnp.linalg.norm and therefore is also a float.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
-* **chunk_size** *(Optional[int])*: if not None, use chunked energy distance estimation. The chunk size is the number of samples per chunk. The number of chunks is determined automatically as `max(len(x), len(y)) // chunk_size`, iterating over the larger dataset once and cycling through the smaller one. If None, use the full dataset.
+* **chunk_size** *(Optional[int])*: if not None, use a landmark-based rectangular distance matrix to estimate the energy distance instead of the full pairwise matrix. `nxc = min(chunk_size, len(x))` samples from x and `nyc = min(chunk_size, len(y))` samples from y are used as fixed "landmarks"; only distances from every sample to these landmarks are computed. If None, use the full dataset.
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
 * **pit_plot** *(Optional[str])*: If given, the path/filename to save a Probability Integral Transform (PIT) plot of the per-simulation p-values against the expected uniform distribution, with a shaded KS confidence band.
@@ -375,21 +374,24 @@ print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 If a GPU isn't enough to get PTED running fast enough for you, or if you are
 running into memory limitations, there are still options! We can use an
 approximation of the energy distance, in this case the test is still exact but
-less sensitive than it would be otherwise. We can approximate the energy
-distance by iterating through sequential chunks of the full dataset, computing
-the energy distance on each chunk, then averaging. Just set the `chunk_size`
-parameter for the number of samples you can manage at once. The number of
-iterations is determined automatically as `max(len(x), len(y)) // chunk_size`,
-iterating over the larger dataset once and cycling through the smaller one if
-their sizes differ. The larger the chunk size, the closer the estimate will be
-to the true energy distance, but it will take more compute.
+less sensitive than it would be otherwise. Instead of building the full
+`(n_samp_x + n_samp_y) x (n_samp_x + n_samp_y)` pairwise distance matrix, PTED
+can build a smaller rectangular `(n_samp_x + n_samp_y) x (nxc + nyc)` matrix of
+distances from every sample to a fixed set of "landmark" samples, where `nxc =
+min(chunk_size, n_samp_x)` landmarks are drawn from x and `nyc = min(chunk_size,
+n_samp_y)` from y. Just set the `chunk_size` parameter to control how many
+landmarks are used. This rectangular matrix is computed only once; the
+permutation distribution is then obtained purely by re-indexing (permuting) its
+rows, which reassigns samples to the x/y groups without recomputing any
+distances. The larger the chunk size, the closer the estimate will be to the
+true energy distance, but it will take more compute.
 
 Note that the computational complexity for standard PTED goes as `O((n_samp_x +
-n_samp_y)^2)` while the chunked version goes as `O(n_iter * (2 * chunk_size)^2)`
-where `n_iter = max(n_samp_x, n_samp_y) // chunk_size`, so plan your chunking
-accordingly. For a given chunk size, the computational complexity of PTED grows
-linearly with dataset size, much like other large scale (machine learning
-oriented) two sample tests.
+n_samp_y)^2)` to build the full distance matrix, while the chunked version goes
+as `O((n_samp_x + n_samp_y) * (nxc + nyc))`, so plan your chunking accordingly.
+For a given chunk size, the computational complexity of PTED grows linearly
+with dataset size, much like other large scale (machine learning oriented) two
+sample tests.
 
 Example:
 ```python
@@ -509,6 +511,7 @@ If you think those are neat, then you'll probably also like this paper, which us
 ```
 
 [^1]: See the Simulation-Based Calibration paper by Talts et al. 2018 for what "SBC" is.
-[^2]: Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
-[^3]: Actually, we take (q + 1) / (Nsamp + 1) rather than q/Nsamp where q is the number of posterior samples with posterior density greater than the ground truth. This just turns out to be a better estimator for finite Nsamp.
-[^4]: actual "necessary but not sufficient" conditions are a different thing than null hypothesis tests, but they have a similar intuitive meaning.
+[^2]: Yes, I see it now. That formula is the same as for MMD. Just think of it as a special case of MMD that uses the Euclidean distance kernel. In fact this way it is often more sensitive than the RBF kernel typically used for MMD.
+[^3]: Since PTED works by a permutation test, we only get the p-value from a discrete uniform distribution. By default we use 1000 permutations, if you are running an especially sensitive test you may need more permutations, but for most purposes this is sufficient.
+[^4]: Actually, we take (q + 1) / (Nsamp + 1) rather than q/Nsamp where q is the number of posterior samples with posterior density greater than the ground truth. This just turns out to be a better estimator for finite Nsamp.
+[^5]: actual "necessary but not sufficient" conditions are a different thing than null hypothesis tests, but they have a similar intuitive meaning.

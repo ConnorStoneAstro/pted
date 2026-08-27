@@ -1,10 +1,9 @@
-from typing import Union
+from typing import Optional, Union
 from warnings import warn
 
 import numpy as np
 from scipy.spatial.distance import cdist
 from scipy.stats import chi2 as chi2_dist, binom, kstwo, kstest
-from scipy.optimize import root_scalar
 from tqdm.auto import trange
 
 try:
@@ -29,16 +28,13 @@ except ImportError:
 __all__ = (
     "is_torch_tensor",
     "is_jax_array",
-    "pted_numpy",
-    "pted_chunk_numpy",
-    "pted_torch",
-    "pted_chunk_torch",
-    "pted_jax",
-    "pted_chunk_jax",
+    "pted",
+    "pted_chunk",
     "two_tailed_p",
     "confidence_alert",
     "simulation_based_calibration_histogram",
     "pit_plot",
+    "hdp_coverage_test",
 )
 
 
@@ -59,285 +55,211 @@ def is_jax_array(o):
     return isinstance(o, jax.Array)
 
 
+def _backend(x) -> str:
+    if is_torch_tensor(x):
+        return "torch"
+    if is_jax_array(x):
+        return "jax"
+    return "numpy"
+
+
+def _concatenate(arrays, backend: str):
+    if backend == "torch":
+        return torch.cat(arrays, dim=0)
+    if backend == "jax":
+        return jnp.concatenate(arrays, axis=0)
+    return np.concatenate(arrays, axis=0)
+
+
+def _all_finite(z, backend: str) -> bool:
+    if backend == "torch":
+        return bool(torch.all(torch.isfinite(z)))
+    if backend == "jax":
+        return bool(jnp.all(jnp.isfinite(z)))
+    return bool(np.all(np.isfinite(z)))
+
+
+def _to_scalar(x, backend: str) -> float:
+    if backend == "torch":
+        return float(x.item())
+    if backend == "jax":
+        return float(x.item())
+    return float(x)
+
+
+def _to_backend(x, backend: str):
+    if backend == "torch":
+        return torch.as_tensor(x)
+    if backend == "jax":
+        return jnp.asarray(x)
+    return np.asarray(x)
+
+
+def _random_permutation(D, backend: str = "numpy"):
+    if backend == "torch":
+        I = torch.randperm(D.shape[0], device=D.device)
+    elif backend == "jax":
+        I = jax.random.permutation(jax.random.PRNGKey(np.random.randint(0, 1e6)), D.shape[0])
+    else:
+        I = np.random.permutation(D.shape[0])
+    return D[I][:, I]
+
+
+@jit
+def _jax_cdist(x, y):
+    return jax.vmap(lambda xi: jnp.linalg.norm(xi - y, ord=2.0, axis=-1))(x)
+
+
+def _cdist(a, b, backend: str):
+    if backend == "torch":
+        return torch.cdist(a, b, p=2.0)
+    if backend == "jax":
+        return _jax_cdist(a, b)
+    return cdist(a, b, metric="euclidean")
+
+
 def _energy_distance_precompute(
-    D: Union[np.ndarray, torch.Tensor], nx: int, ny: int
+    D: Union[np.ndarray, torch.Tensor],
+    nx: int,
+    ny: int,
+    nxc: Optional[int] = None,
+    nyc: Optional[int] = None,
 ) -> Union[float, torch.Tensor]:
-    Exx = D[:nx, :nx].sum() / nx**2
-    Eyy = D[nx:, nx:].sum() / ny**2
-    Exy = D[:nx, nx:].sum() / (nx * ny)
+    """Energy distance from a rectangular (nx+ny, nxc+nyc) distance matrix.
+
+    If ``D`` is a full (nx+ny, nx+ny) distance matrix, then ``nxc=nx`` and
+    ``nyc=ny`` and this is the standard energy distance formula. Otherwise, if
+    ``D`` is a rectangular (nx+ny, nxc+nyc) distance matrix, then ``D`` holds
+    distances from every sample (rows: ``nx`` of x followed by ``ny`` of y) to a
+    set of landmark samples (columns: ``nxc`` from x followed by ``nyc`` from
+    y). Exx/Eyy are estimated from each group against its own landmarks, and Exy
+    is estimated by averaging the two cross blocks (x-rows vs y-landmarks, and
+    y-rows vs x-landmarks).
+    """
+    nxc = nx if nxc is None else nxc
+    nyc = ny if nyc is None else nyc
+    Exx = D[:nx, :nxc].sum() / (nx * nxc)
+    Eyy = D[nx:, nxc:].sum() / (ny * nyc)
+    Exy = (D[:nx, nxc:].sum() + D[nx:, :nxc].sum()) / (nx * nyc + ny * nxc)
     return 2 * Exy - Exx - Eyy
 
 
-def _energy_distance_numpy(x: np.ndarray, y: np.ndarray, metric: str = "euclidean") -> float:
-    nx = len(x)
-    ny = len(y)
-    z = np.concatenate((x, y), axis=0)
-    D = cdist(z, z, metric=metric)
-    return _energy_distance_precompute(D, nx, ny)
-
-
-def _energy_distance_torch(
-    x: torch.Tensor, y: torch.Tensor, metric: Union[str, float] = "euclidean"
-) -> float:
-    nx = len(x)
-    ny = len(y)
-    z = torch.cat((x, y), dim=0)
-    if metric == "euclidean":
-        metric = 2.0
-    D = torch.cdist(z, z, p=metric)
-    return _energy_distance_precompute(D, nx, ny).item()
-
-
-def _chunk_slices(lenx: int, leny: int, chunk_size: int):
-    """Yield slices for chunking two arrays of lengths lenx and leny.
-
-    The smaller of the two is cycled while the larger is iterated through
-    completely (minus the last incomplete chunk if any).
-    """
-    nx = max(1, lenx // chunk_size)
-    ny = max(1, leny // chunk_size)
-
-    for i in range(max(nx, ny)):
-        ix = i % nx
-        iy = i % ny
-        yield slice(ix * chunk_size, (ix + 1) * chunk_size), slice(
-            iy * chunk_size, (iy + 1) * chunk_size
-        )
-
-
-def _energy_distance_estimate(
+def pted(
     x,
     y,
+    permutations: int,
+    prog_bar: bool = False,
+) -> tuple[float, list[float]]:
+    """Permutation-based energy distance test statistic and its permutation distribution.
+
+    Works transparently with numpy arrays, torch tensors, and jax arrays.
+    """
+    if is_torch_tensor(x):
+        assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
+    if is_jax_array(x):
+        assert jax is not None, "JAX is not installed! try: `pip install jax`"
+
+    backend = _backend(x)
+    z = _concatenate((x, y), backend)
+    assert _all_finite(z, backend), "Input contains NaN or Inf!"
+    dmatrix = _cdist(z, z, backend)
+    assert _all_finite(
+        dmatrix, backend
+    ), "Distance matrix contains NaN or Inf! Consider normalizing values to be more stable (i.e. z-score norm)."
+    if backend == "jax":  # numpy is faster for eager stuff
+        dmatrix = np.asarray(dmatrix)
+        backend = "numpy"
+    nx = len(x)
+    ny = len(y)
+
+    test_stat = _to_scalar(_energy_distance_precompute(dmatrix, nx, ny), backend)
+    permute_stats = []
+    for _ in trange(permutations, disable=not prog_bar):
+        dmatrix = _random_permutation(dmatrix, backend)
+        permute_stats.append(_to_scalar(_energy_distance_precompute(dmatrix, nx, ny), backend))
+
+    return test_stat, permute_stats
+
+
+def pted_chunk(
+    x,
+    y,
+    permutations: int,
     chunk_size: int,
-    metric: Union[str, float],
-    energy_distance_fn,
-) -> float:
-    """Estimate energy distance by averaging over sequential sliced chunks.
+    prog_bar: bool = False,
+) -> tuple[float, list[float]]:
+    """Chunked variant of `pted` for large datasets.
 
-    Iterates ``max(len(x), len(y)) // chunk_size`` times, using plain slicing
-    on both arrays.  The smaller of the two is tiled along axis 0 as needed so
-    that both arrays are at least ``n_iter * chunk_size`` rows long before the
-    loop begins.
+    Rather than the full ``(nx+ny, nx+ny)`` pairwise distance matrix, this
+    builds a rectangular ``(nx+ny, nxc+nyc)`` matrix of distances from every
+    sample to a set of randomly chosen "landmark" samples, where ``nxc =
+    min(chunk_size, nx)`` landmarks are drawn from ``x`` and ``nyc =
+    min(chunk_size, ny)`` from ``y``. This matrix is computed only once; the
+    permutation distribution is then obtained by re-indexing (permuting) its
+    rows, which reassigns samples to the x/y groups without recomputing any
+    distances. Each landmark's row position is tracked and carried through the
+    same row permutation, so after every shuffle the landmarks are re-split into
+    "x-side"/"y-side" columns according to where they now fall, keeping rows and
+    columns consistent. In pathological cases where too few landmarks are
+    permuted onto either side (zero or one tenth of the original number of
+    landmarks), a new permutation is drawn.
+
+    Works transparently with numpy arrays, torch tensors, and jax arrays.
     """
-    E_est = []
-    for cx, cy in _chunk_slices(len(x), len(y), chunk_size):
-        E_est.append(energy_distance_fn(x[cx], y[cy], metric=metric))
-    return np.mean(E_est)
+    if is_torch_tensor(x):
+        assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
+    if is_jax_array(x):
+        assert jax is not None, "JAX is not installed! try: `pip install jax`"
 
-
-@jit(static_argnames=["p"])
-def _jax_cdist(x, y, p: float = 2.0):
-    # For general p-norms use vmap to avoid the (nx, ny, d) intermediate.
-    return jax.vmap(lambda xi: jnp.linalg.norm(xi - y, ord=p, axis=-1))(x)
-
-
-def _energy_distance_jax(x, y, metric: Union[str, float] = "euclidean") -> float:
+    backend = _backend(x)
+    z = _concatenate((x, y), backend)
+    assert _all_finite(z, backend), "Input contains NaN or Inf!"
     nx = len(x)
     ny = len(y)
-    z = jnp.concatenate([x, y], axis=0)
-    if metric == "euclidean":
-        metric = 2.0
-    D = _jax_cdist(z, z, p=metric)
-    return float(_energy_distance_precompute(D, nx, ny))
+    nxc = min(chunk_size, nx)
+    nyc = min(chunk_size, ny)
 
-
-def pted_chunk_numpy(
-    x: np.ndarray,
-    y: np.ndarray,
-    permutations: int = 100,
-    metric: str = "euclidean",
-    chunk_size: int = 100,
-    prog_bar: bool = False,
-) -> tuple[float, list[float]]:
-    assert np.all(np.isfinite(x)) and np.all(np.isfinite(y)), "Input contains NaN or Inf!"
-    nx = len(x)
-
-    test_stat = _energy_distance_estimate(
-        x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_numpy
-    )
-    permute_stats = []
-    z = np.concatenate((x, y), axis=0)
-    for _ in trange(permutations, disable=not prog_bar):
-        z = z[np.random.permutation(len(z))]
-        permute_stats.append(
-            _energy_distance_estimate(
-                z[:nx], z[nx:], chunk_size, metric=metric, energy_distance_fn=_energy_distance_numpy
-            )
+    landmark_pos = np.sort(
+        np.concatenate(
+            [
+                np.random.choice(nx, size=nxc, replace=False),
+                nx + np.random.choice(ny, size=nyc, replace=False),
+            ]
         )
-    return test_stat, permute_stats
-
-
-def pted_chunk_torch(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    permutations: int = 100,
-    metric: Union[str, float] = "euclidean",
-    chunk_size: int = 100,
-    prog_bar: bool = False,
-) -> tuple[float, list[float]]:
-    assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
-    assert torch.all(torch.isfinite(x)) and torch.all(
-        torch.isfinite(y)
-    ), "Input contains NaN or Inf!"
-    nx = len(x)
-
-    test_stat = _energy_distance_estimate(
-        x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_torch
     )
+    dmatrix = _cdist(z, z[_to_backend(landmark_pos, backend)], backend)
+    assert _all_finite(
+        dmatrix, backend
+    ), "Distance matrix contains NaN or Inf! Consider normalizing values to be more stable (i.e. z-score norm)."
+    if backend == "jax":  # numpy is faster for eager stuff
+        dmatrix = np.asarray(dmatrix)
+        backend = "numpy"
+
+    test_stat = _to_scalar(_energy_distance_precompute(dmatrix, nx, ny, nxc, nyc), backend)
     permute_stats = []
-    z = torch.cat((x, y), dim=0)
     for _ in trange(permutations, disable=not prog_bar):
-        z = z[torch.randperm(len(z))]
-        permute_stats.append(
-            _energy_distance_estimate(
-                z[:nx], z[nx:], chunk_size, metric=metric, energy_distance_fn=_energy_distance_torch
+        while True:
+            I = np.random.permutation(len(z))
+            # Track where each landmark moved to, then re-split columns by their new x/y side.
+            landmark_pos = np.argsort(I)[landmark_pos]
+            order = np.argsort(landmark_pos >= nx, kind="stable")
+            dmatrix_i = dmatrix[_to_backend(I, backend)][:, _to_backend(order, backend)]
+            landmark_pos = landmark_pos[order]
+            nxc_i = int(np.sum(landmark_pos < nx))
+            nyc_i = nxc + nyc - nxc_i
+            if nxc_i < max(1, (nxc * 0.1)) or nyc_i < max(1, (nyc * 0.1)):
+                continue  # Skip this permutation if too few landmarks remain on either side, to avoid unstable estimates.
+            permute_stats.append(
+                _to_scalar(_energy_distance_precompute(dmatrix_i, nx, ny, nxc_i, nyc_i), backend)
             )
-        )
-    return test_stat, permute_stats
-
-
-def pted_numpy(
-    x: np.ndarray,
-    y: np.ndarray,
-    permutations: int = 100,
-    metric: str = "euclidean",
-    prog_bar: bool = False,
-) -> tuple[float, list[float]]:
-    z = np.concatenate((x, y), axis=0)
-    assert np.all(np.isfinite(z)), "Input contains NaN or Inf!"
-    dmatrix = cdist(z, z, metric=metric)
-    assert np.all(
-        np.isfinite(dmatrix)
-    ), "Distance matrix contains NaN or Inf! Consider using a different metric or normalizing values to be more stable (i.e. z-score norm)."
-    nx = len(x)
-    ny = len(y)
-
-    test_stat = _energy_distance_precompute(dmatrix, nx, ny)
-    permute_stats = []
-    for _ in trange(permutations, disable=not prog_bar):
-        I = np.random.permutation(len(z))
-        dmatrix = dmatrix[I][:, I]
-        permute_stats.append(_energy_distance_precompute(dmatrix, nx, ny))
-    return test_stat, permute_stats
-
-
-def pted_torch(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    permutations: int = 100,
-    metric: Union[str, float] = "euclidean",
-    prog_bar: bool = False,
-) -> tuple[float, list[float]]:
-    assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
-    z = torch.cat((x, y), dim=0)
-    assert torch.all(torch.isfinite(z)), "Input contains NaN or Inf!"
-    if metric == "euclidean":
-        metric = 2.0
-    dmatrix = torch.cdist(z, z, p=metric)
-    assert torch.all(
-        torch.isfinite(dmatrix)
-    ), "Distance matrix contains NaN or Inf! Consider using a different metric or normalizing values to be more stable (i.e. z-score norm)."
-    nx = len(x)
-    ny = len(y)
-
-    test_stat = _energy_distance_precompute(dmatrix, nx, ny).item()
-    permute_stats = []
-    for _ in trange(permutations, disable=not prog_bar):
-        I = torch.randperm(len(z))
-        dmatrix = dmatrix[I][:, I]
-        permute_stats.append(_energy_distance_precompute(dmatrix, nx, ny).item())
-    return test_stat, permute_stats
-
-
-def pted_jax(
-    x,
-    y,
-    permutations: int = 100,
-    metric: Union[str, float] = "euclidean",
-    prog_bar: bool = False,
-) -> tuple[float, list[float]]:
-    assert jax is not None, "JAX is not installed! try: `pip install jax`"
-    z = jnp.concatenate([x, y], axis=0)
-    assert jnp.all(jnp.isfinite(z)), "Input contains NaN or Inf!"
-    if metric == "euclidean":
-        metric = 2.0
-    dmatrix = _jax_cdist(z, z, p=metric)
-    assert jnp.all(
-        jnp.isfinite(dmatrix)
-    ), "Distance matrix contains NaN or Inf! Consider using a different metric or normalizing values to be more stable (i.e. z-score norm)."
-    nx = len(x)
-    ny = len(y)
-
-    test_stat = float(_energy_distance_precompute(dmatrix, nx, ny))
-    permute_stats = []
-    for _ in trange(permutations, disable=not prog_bar):
-        I = np.random.permutation(len(z))
-        dmatrix = dmatrix[I][:, I]
-        permute_stats.append(float(_energy_distance_precompute(dmatrix, nx, ny)))
-    return test_stat, permute_stats
-
-
-def pted_chunk_jax(
-    x,
-    y,
-    permutations: int = 100,
-    metric: Union[str, float] = "euclidean",
-    chunk_size: int = 100,
-    prog_bar: bool = False,
-) -> tuple[float, list[float]]:
-    assert jax is not None, "JAX is not installed! try: `pip install jax`"
-    assert jnp.all(jnp.isfinite(x)) and jnp.all(jnp.isfinite(y)), "Input contains NaN or Inf!"
-    nx = len(x)
-
-    test_stat = _energy_distance_estimate(
-        x, y, chunk_size, metric=metric, energy_distance_fn=_energy_distance_jax
-    )
-    permute_stats = []
-    z = jnp.concatenate([x, y], axis=0)
-    for _ in trange(permutations, disable=not prog_bar):
-        z = z[np.random.permutation(len(z))]
-        permute_stats.append(
-            _energy_distance_estimate(
-                z[:nx], z[nx:], chunk_size, metric=metric, energy_distance_fn=_energy_distance_jax
-            )
-        )
+            break
     return test_stat, permute_stats
 
 
 def two_tailed_p(chi2, df):
-    assert df > 2, "Degrees of freedom must be greater than 2 for two-tailed p-value calculation."
     p_left = chi2_dist.cdf(chi2, df)
     p_right = chi2_dist.sf(chi2, df)
     return 2 * min(p_left, p_right)
-
-
-###### This is a density based two tailed p-value, it is kept for reference but not used #######
-# def two_tailed_p(chi2, df):
-#     assert df > 2, "Degrees of freedom must be greater than 2 for two-tailed p-value calculation."
-#     alpha = chi2_dist.pdf(chi2, df)
-#     mode = df - 2
-
-#     if np.isclose(chi2, mode):
-#         return 1.0
-
-#     def root_eq(x):
-#         return chi2_dist.pdf(x, df) - alpha
-
-#     # Find left root
-#     if chi2 < mode:
-#         left = chi2_dist.cdf(chi2, df)
-#     else:
-#         res_left = root_scalar(root_eq, bracket=[0, mode], method="brentq")
-#         left = chi2_dist.cdf(res_left.root, df)
-
-#     # Find right root
-#     if chi2 > mode:
-#         right = chi2_dist.sf(chi2, df)
-#     else:
-#         res_right = root_scalar(root_eq, bracket=[mode, 10000 * df], method="brentq")
-#         right = chi2_dist.sf(res_right.root, df)
-
-#     return left + right
 
 
 class OverconfidenceWarning(UserWarning):
