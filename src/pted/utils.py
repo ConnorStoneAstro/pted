@@ -26,10 +26,12 @@ Dispatched on ``n_s = min(n1, n2)``, the smaller group:
     symmetric group, and the statistic is the exact energy distance.
 
 ``singleton``
-    ``n_s == 1``. All columns come from the large group, so the lone
-    small-group element sits in ``C^c``. Its within-group mean is identically
-    zero (a single point has no within-group pairs). The label roams over
-    ``C^c``: ``n - c`` distinct assignments.
+    ``n_s == 1``. Its within-group mean is identically zero (a single point
+    has no within-group pairs), so nothing is unestimable and the lone point
+    may sit on either side of ``C``. It goes on whichever side is larger:
+    outside, its label roams over ``C^c`` for ``n - c`` assignments; inside,
+    over the columns for ``c``. The reference set is therefore never smaller
+    than ``ceil(n / 2)``.
 
 ``small_group_in_C``
     ``n_s <= c // 2``. ``C`` holds ALL of the small group plus ``c - n_s`` from
@@ -48,9 +50,10 @@ scales as ``(n * c)^{-1/2}`` versus ``n^{-1}`` for the full test: the detection
 threshold degrades as one over the square root of the compute. See Janson
 (1984) on incomplete U-statistics.
 
-In the ``singleton`` regime the reference set is ``n - c``, so columns come
-straight out of p-value resolution. A single row is nearly sufficient for the
-statistic there, so keep ``c`` small -- roughly 5-15% of ``n``.
+In the ``singleton`` regime a single row is nearly sufficient for the
+statistic, so keep ``c`` small -- roughly 5-15% of ``n``. Columns there come
+straight out of p-value resolution until ``c`` passes ``n / 2``, beyond which
+you may as well pay for the full matrix.
 
 Block means exclude the zero self-pairs, making the statistic unbiased for the
 population energy distance. It can therefore be negative under H0, like
@@ -297,11 +300,20 @@ def allocate_columns(n1: int, n2: int, n_columns: int, rng=None) -> dict:
         cols = np.arange(n)
         regime, c_small = "full", n_small
     elif n_small == 1:
-        # Keep the singleton OUT of C so its label can range over C^c, which is
-        # the larger of the two options whenever c < n / 2. Reaching here means
-        # c < n, and n_large == n - 1, so C fits inside the large group.
-        cols = rng.choice(large_idx, size=n_columns, replace=False)
-        regime, c_small = "singleton", 0
+        # A lone point has no within-group pairs, so it is free to sit on
+        # either side of C. Inside, its label roams over the c column
+        # positions; outside, over the n - c others. Take whichever side is
+        # larger, which holds the reference set at ceil(n / 2) or more instead
+        # of letting it collapse to 1 as c approaches n.
+        regime = "singleton"
+        if n_columns > n - n_columns:
+            cols = np.concatenate(
+                [small_idx, rng.choice(large_idx, size=n_columns - 1, replace=False)]
+            )
+            c_small = 1
+        else:
+            cols = rng.choice(large_idx, size=n_columns, replace=False)
+            c_small = 0
     elif n_small <= n_columns // 2:
         # Put the whole small group in C so that every permuted small group is
         # still a subset of C and its within-group distances are all present.
@@ -360,7 +372,8 @@ def _warn_reference_size(alloc: dict, permutations: int) -> None:
     hint = {
         "singleton": (
             f"the small group holds a single point, so the reference set is "
-            f"n - n_columns; use fewer columns (currently {alloc['n_columns']})"
+            f"max(n_columns, n - n_columns); move n_columns (currently "
+            f"{alloc['n_columns']}) further from half the pooled sample size"
         ),
         "full": "the samples are too small for a permutation test at this resolution",
     }.get(

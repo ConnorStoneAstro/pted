@@ -186,7 +186,8 @@ ALLOCATIONS = [
     # n1, n2, n_columns, expected regime
     (100, 100, 200, "full"),
     (3, 40, 43, "full"),
-    (1, 60, 12, "singleton"),
+    (1, 60, 12, "singleton"),  # c < n/2 -> the lone point stays out of C
+    (1, 20, 15, "singleton"),  # c > n/2 -> it moves into C instead
     (6, 80, 40, "small_group_in_C"),
     (40, 50, 30, "proportional"),
     (40, 50, 3, "proportional"),
@@ -376,16 +377,41 @@ def test_resolve_n_columns():
     assert _resolve_n_columns(20, 30, n_columns=1) == 1
 
 
+def test_singleton_picks_the_larger_side_of_C():
+    """A lone point sits inside or outside C, whichever leaves more label
+    assignments reachable. Without this the reference set collapses to 1 as c
+    approaches n, and the test can only ever return p = 1."""
+    n2 = 200
+    n = 1 + n2
+    for c in range(2, n):
+        alloc = allocate_columns(1, n2, c, rng=0)
+        assert alloc["regime"] == "singleton"
+        assert alloc["c_small"] == (1 if c > n - c else 0)
+        assert alloc["reference_size"] == max(c, n - c)
+    # so the reference set never drops below half the pooled sample
+    worst = min(allocate_columns(1, n2, c, rng=0)["reference_size"] for c in range(2, n))
+    assert worst >= n // 2
+
+
 def test_permutation_resolution_warning():
-    """Too many columns starves the singleton regime of distinct assignments."""
+    """Column counts that starve the permutation group are flagged."""
     rng = np.random.default_rng(2)
-    x = rng.standard_normal((1, 3))
-    y = rng.standard_normal((60, 3))
 
-    with pytest.warns(PermutationResolutionWarning, match="distinct label assignments"):
-        permutation_energy_test(x, y, permutations=100, n_columns=55)
+    # singleton: only a genuinely tiny pooled sample is short of assignments now
+    with pytest.warns(PermutationResolutionWarning, match="single point"):
+        permutation_energy_test(
+            rng.standard_normal((1, 3)), rng.standard_normal((10, 3)), permutations=100, n_columns=5
+        )
 
-    # a sensible column count is quiet
+    # small_group_in_C: too FEW columns is the failure mode here
+    with pytest.warns(PermutationResolutionWarning, match="use more columns"):
+        permutation_energy_test(
+            rng.standard_normal((2, 3)), rng.standard_normal((30, 3)), permutations=100, n_columns=5
+        )
+
+    # sensible column counts are quiet, at either end of the singleton range
+    x, y = rng.standard_normal((1, 3)), rng.standard_normal((60, 3))
     with warnings.catch_warnings():
         warnings.simplefilter("error", PermutationResolutionWarning)
         permutation_energy_test(x, y, permutations=100, n_columns=8)
+        permutation_energy_test(x, y, permutations=100, n_columns=55)

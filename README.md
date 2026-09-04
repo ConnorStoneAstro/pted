@@ -440,11 +440,43 @@ The detection threshold degrades as one over the square root of the compute.
 
 You also give up some p-value resolution, and this is most significant when one
 group holds a single point — which is exactly the per-simulation test inside
-`pted_coverage_test`. There the permutation subgroup only reaches `n - c`
-distinct label assignments, so the smallest attainable p-value is about `1 / (n
-- c)` no matter how many permutations you draw. Keep `chunk_size` well below the
-number of posterior samples in that case; PTED raises a
-`PermutationResolutionWarning` when the column count is too greedy.
+`pted_coverage_test`. There the lone point can sit inside `C`, its label roaming
+over the `c` column positions, or outside it, roaming over the other `n - c`, so
+the subgroup reaches `max(c, n - c)` distinct label assignments. PTED puts the
+point on whichever side is larger, which holds the reference set at half the
+pooled sample or better. The smallest attainable p-value is still about the
+reciprocal of that, however many permutations you draw, so PTED raises a
+`PermutationResolutionWarning` when the reachable set is too small to resolve
+the p-value you asked for.
+
+### Does restricting the permutations still measure the energy distance?
+
+Yes — the restriction is on how the statistic is *calibrated*, not on what it
+measures. Every block mean still averages genuine distances between genuine
+members of the two groups: the cross term pairs **all** `n_x` samples against the
+large-group columns and **all** `n_y` samples against the small-group columns, so
+no sample is demoted to a mere marker. Each block mean is an unbiased estimate of
+exactly the population quantity the full test estimates, which makes the whole
+statistic an unbiased estimator of the population energy distance — an
+*incomplete U-statistic* in the sense of Janson (1984), averaging over a subset
+of the pairs rather than computing a different function of them.
+
+Freezing the per-group column counts is a restricted-randomisation device, the
+same idea as conditioning on the margins in Fisher's exact test: it removes a
+nuisance source of variability from the null rather than changing the estimand.
+Empirically it is power-neutral. Compare it against the obvious alternative —
+draw `C` uniformly by position, so that `C` is independent of the labels and the
+full permutation group is legal — and both reject at the same rate (`n = 200`,
+`c = 40`, 500 trials: 0.16 vs 0.16 at a 0.25σ shift, 0.31 vs 0.35 at 0.40σ). The
+power lost relative to the full test comes from subsampling, not from the
+subgroup.
+
+What the subgroup buys is the freedom to choose `C` *by design*. Drawing `C`
+blind to the labels leaves the smaller group with no columns at all — and its
+within-group term unestimable — distressingly often once the samples are
+unbalanced: with `n_x = 3`, `n_y = 200` and `c = 40`, 52% of permutations have no
+x-columns. Choosing `C` so that it covers the small group fixes that, and the
+subgroup is what keeps the test exact when you do.
 
 ## Citation
 

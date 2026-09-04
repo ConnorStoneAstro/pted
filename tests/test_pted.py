@@ -358,6 +358,7 @@ def test_pted_rng_is_reproducible():
     [
         (60, 60, 24, "proportional"),
         (1, 100, 11, "singleton"),
+        (1, 40, 30, "singleton"),  # c > n/2, so the lone point sits inside C
     ],
 )
 def test_chunked_pvalues_are_calibrated(n1, n2, n_columns, regime):

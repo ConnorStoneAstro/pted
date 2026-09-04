@@ -128,11 +128,12 @@ def pted(
 
         The one thing chunking does cost is p-value resolution, and it bites
         hardest when one group holds a single point (the per-simulation test
-        inside ``pted_coverage_test``). There the subgroup reaches only
-        ``n - c`` distinct label assignments, so the smallest attainable
-        p-value is about ``1 / (n - c)`` however many permutations are drawn.
-        Keep ``chunk_size`` well below ``len(s)`` in that case; a
-        ``PermutationResolutionWarning`` is raised when it is too large.
+        inside ``pted_coverage_test``). That lone point sits on whichever side
+        of the column set leaves more room, so the subgroup reaches
+        ``max(c, n - c)`` distinct label assignments and the smallest
+        attainable p-value is about the reciprocal of that, however many
+        permutations are drawn. A ``PermutationResolutionWarning`` is raised
+        when the reachable set is too small to resolve the p-value requested.
     """
     assert type(x) == type(y), f"x and y must be of the same type, not {type(x)} and {type(y)}"
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
@@ -295,11 +296,12 @@ def pted_coverage_test(
 
         The one thing chunking does cost is p-value resolution, and it bites
         hardest when one group holds a single point (the per-simulation test
-        inside ``pted_coverage_test``). There the subgroup reaches only
-        ``n - c`` distinct label assignments, so the smallest attainable
-        p-value is about ``1 / (n - c)`` however many permutations are drawn.
-        Keep ``chunk_size`` well below ``len(s)`` in that case; a
-        ``PermutationResolutionWarning`` fires when it is too large.
+        inside ``pted_coverage_test``). That lone point sits on whichever side
+        of the column set leaves more room, so the subgroup reaches
+        ``max(c, n - c)`` distinct label assignments and the smallest
+        attainable p-value is about the reciprocal of that, however many
+        permutations are drawn. A ``PermutationResolutionWarning`` is raised
+        when the reachable set is too small to resolve the p-value requested.
     """
     nsamp, nsim, *_ = s.shape
     assert nsim > 0, "need some simulations to run test, got 0 simulations"
