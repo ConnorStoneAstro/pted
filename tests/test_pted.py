@@ -249,37 +249,41 @@ def test_is_jax_array_no_jax(monkeypatch):
 
 
 def test_pted_jax_no_jax(monkeypatch):
-    """pted raises AssertionError when a jax array is passed but JAX is not installed."""
+    """permutation_energy_test raises AssertionError when a jax array is passed but JAX is not installed."""
     monkeypatch.setattr("pted.utils.jax", None)
     monkeypatch.setattr("pted.utils.is_jax_array", lambda o: True)
     with pytest.raises(AssertionError, match="JAX is not installed"):
-        pted.utils.pted(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10)
+        pted.utils.permutation_energy_test(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10)
 
 
 def test_pted_chunk_jax_no_jax(monkeypatch):
-    """pted_chunk raises AssertionError when a jax array is passed but JAX is not installed."""
+    """permutation_energy_test raises AssertionError when a jax array is passed but JAX is not installed."""
     monkeypatch.setattr("pted.utils.jax", None)
     monkeypatch.setattr("pted.utils.is_jax_array", lambda o: True)
     with pytest.raises(AssertionError, match="JAX is not installed"):
-        pted.utils.pted_chunk(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, chunk_size=2)
+        pted.utils.permutation_energy_test(
+            np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, chunk_size=2
+        )
 
 
 def test_pted_torch_no_torch(monkeypatch):
-    """pted raises AssertionError when a torch tensor is passed but torch is not installed."""
+    """permutation_energy_test raises AssertionError when a torch tensor is passed but torch is not installed."""
     fake_torch = types.SimpleNamespace(__version__="null")
     monkeypatch.setattr("pted.utils.torch", fake_torch)
     monkeypatch.setattr("pted.utils.is_torch_tensor", lambda o: True)
     with pytest.raises(AssertionError, match="PyTorch is not installed"):
-        pted.utils.pted(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10)
+        pted.utils.permutation_energy_test(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10)
 
 
 def test_pted_chunk_torch_no_torch(monkeypatch):
-    """pted_chunk raises AssertionError when a torch tensor is passed but torch is not installed."""
+    """permutation_energy_test raises AssertionError when a torch tensor is passed but torch is not installed."""
     fake_torch = types.SimpleNamespace(__version__="null")
     monkeypatch.setattr("pted.utils.torch", fake_torch)
     monkeypatch.setattr("pted.utils.is_torch_tensor", lambda o: True)
     with pytest.raises(AssertionError, match="PyTorch is not installed"):
-        pted.utils.pted_chunk(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, chunk_size=2)
+        pted.utils.permutation_energy_test(
+            np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, chunk_size=2
+        )
 
 
 @pytest.mark.parametrize("backend", ["torch", "jax"])
@@ -297,3 +301,131 @@ def test_cdist_matches_scipy(backend):
         pted.utils._cdist(_to_backend(x_np, backend), _to_backend(y_np, backend), backend=backend)
     )
     assert np.allclose(got, expected, rtol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# The new column/batching controls
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_pted_n_columns(backend):
+    """n_columns names the column count directly, and agrees with the
+    chunk_size that maps onto the same value."""
+    _require_backend(backend)
+    np.random.seed(11)
+    x = _to_backend(np.random.normal(size=(300, 6)), backend)
+    y = _to_backend(np.random.normal(size=(300, 6)), backend)
+
+    # chunk_size=40 on two equal groups requests 40 + 40 columns
+    p_chunk = pted.pted(x, y, chunk_size=40, rng=0)
+    p_cols = pted.pted(x, y, n_columns=80, rng=0)
+    assert p_chunk == p_cols
+
+    y_diff = _to_backend(np.random.uniform(size=(300, 6)), backend)
+    assert pted.pted(x, y_diff, n_columns=80) < 1e-2
+
+    # n_columns covering the pooled sample is just the full test
+    assert pted.pted(x, y, n_columns=10_000, rng=3) == pted.pted(x, y, rng=3)
+
+
+def test_pted_column_args_are_exclusive():
+    x = np.random.normal(size=(20, 3))
+    y = np.random.normal(size=(20, 3))
+    with pytest.raises(ValueError, match="not both"):
+        pted.pted(x, y, chunk_size=5, n_columns=10)
+
+
+def test_pted_rng_is_reproducible():
+    """An explicit rng pins the permutations; the global seed still works when
+    none is given."""
+    x = np.random.normal(size=(60, 4))
+    y = np.random.normal(size=(60, 4))
+
+    a = pted.pted(x, y, permutations=200, n_columns=30, rng=7, return_all=True)
+    b = pted.pted(x, y, permutations=200, n_columns=30, rng=7, return_all=True)
+    assert a[0] == b[0] and np.array_equal(a[1], b[1]) and a[2] == b[2]
+
+    np.random.seed(4)
+    c = pted.pted(x, y, permutations=200, n_columns=30, return_all=True)
+    np.random.seed(4)
+    d = pted.pted(x, y, permutations=200, n_columns=30, return_all=True)
+    assert np.array_equal(c[1], d[1]), "np.random.seed should still pin the permutations"
+
+
+@pytest.mark.parametrize(
+    "n1,n2,n_columns,regime",
+    [
+        (60, 60, 24, "proportional"),
+        (1, 100, 11, "singleton"),
+    ],
+)
+def test_chunked_pvalues_are_calibrated(n1, n2, n_columns, regime):
+    """Type-I error under H0 must match the nominal rate.
+
+    This is the property the chunked test exists to preserve, and the one the
+    earlier landmark-reshuffling scheme lost: because it re-split the columns
+    by group after each permutation while the observed statistic always used a
+    perfectly balanced split, the observed value was not exchangeable with the
+    permuted ones. It rejected at 29% (proportional) and 84% (singleton) for a
+    nominal 5%. Fixed seed, so this is deterministic rather than flaky.
+    """
+    from pted.utils import allocate_columns
+
+    assert allocate_columns(n1, n2, n_columns, rng=0)["regime"] == regime
+
+    trials, permutations = 600, 49
+    rng = np.random.default_rng(20240904)
+    pvals = np.empty(trials)
+    for t in range(trials):
+        # H0 is true: both groups come from the same distribution
+        x = rng.standard_normal((n1, 4))
+        y = rng.standard_normal((n2, 4))
+        pvals[t] = pted.pted(
+            x, y, permutations=permutations, n_columns=n_columns, two_tailed=False, rng=rng
+        )
+
+    for nominal, tol in ((0.10, 0.05), (0.20, 0.06)):
+        rate = float(np.mean(pvals <= nominal))
+        assert (
+            abs(rate - nominal) < tol
+        ), f"{regime}: rejected {rate:.3f} of {trials} null trials at nominal {nominal}"
+
+
+def test_coverage_test_rng_is_not_shared_across_simulations():
+    """A bare seed must not hand every simulation the same permutation draws,
+    while the run as a whole stays reproducible from that seed."""
+    g = np.random.default_rng(0).standard_normal((6, 3))
+    s = np.random.default_rng(1).standard_normal((40, 6, 3))
+
+    _, permute, _ = pted.pted_coverage_test(g, s, permutations=50, rng=7, return_all=True)
+    assert not any(np.array_equal(permute[0], permute[i]) for i in range(1, len(permute)))
+
+    _, again, _ = pted.pted_coverage_test(g, s, permutations=50, rng=7, return_all=True)
+    assert np.array_equal(permute, again)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_coverage_test_with_chunking(backend):
+    """Chunked coverage runs end to end and still separates a calibrated
+    posterior from an over/under-confident one."""
+    _require_backend(backend)
+    rng = np.random.default_rng(3)
+    nsim, nsamp, d = 40, 300, 3
+    g, draws = [], []
+    for _ in range(nsim):
+        loc = rng.standard_normal(d) * 5
+        scale = rng.uniform(1, 4, size=d)
+        g.append(rng.normal(loc, scale, size=d))
+        draws.append(rng.normal(loc, scale, size=(nsamp, d)))
+    g = _to_backend(np.array(g), backend)
+    ok = _to_backend(np.stack(draws, axis=1), backend)
+    over = _to_backend(
+        np.stack([v.mean(0) + (v - v.mean(0)) * 0.4 for v in draws], axis=1), backend
+    )
+
+    p_ok = pted.pted_coverage_test(g, ok, permutations=199, chunk_size=30)
+    assert 1e-2 < p_ok < 0.99, f"calibrated posterior gave p={p_ok}"
+
+    p_over = pted.pted_coverage_test(g, over, permutations=199, chunk_size=30, warn_confidence=None)
+    assert p_over < 1e-2, f"overconfident posterior gave p={p_over}"

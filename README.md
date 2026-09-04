@@ -97,7 +97,16 @@ You can also generate a Probability Integral Transform (PIT) plot via `pit_plot 
 
 PTED uses the energy distance of the two samples `x` and `y`, this is computed as:
 
-$$d = \frac{2}{n_xn_y}\sum_{i,j}||x_i - y_j|| - \frac{1}{n_x^2}\sum_{i,j}||x_i - x_j|| - \frac{1}{n_y^2}\sum_{i,j}||y_i - y_j||$$
+$$d = \frac{2}{n_xn_y}\sum_{i,j}||x_i - y_j|| - \frac{1}{n_x(n_x-1)}\sum_{i\neq j}||x_i - x_j|| - \frac{1}{n_y(n_y-1)}\sum_{i\neq j}||y_i - y_j||$$
+
+The within-group sums run over distinct pairs, skipping the `i = j` terms which
+are zero by construction. That makes `d` an unbiased estimator of the population
+energy distance, so under the null it scatters around zero and can come out
+slightly negative (and strongly negative if `x` and `y` are *more* alike than
+chance allows, e.g. if they share samples). Only its rank among the permuted
+values matters. For equal sample sizes this ranks the permutations identically
+to the `1/n^2` normalisation of Székely & Rizzo, so the p-value is unchanged; for
+unequal sizes the two differ slightly.
 
 The energy distance measures distances between pairs of points[^2]. It becomes more
 positive if the `x` and `y` samples tend to be further from each other than from
@@ -298,6 +307,9 @@ def pted(
     chunk_size: Optional[int] = None,
     two_tailed: bool = True,
     prog_bar: bool = False,
+    n_columns: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    rng=None,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
 ```
 
@@ -305,9 +317,12 @@ def pted(
 * **y** *(Union[np.ndarray, Tensor, jax.Array])*: second set of samples. Shape (M, *D)
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
-* **chunk_size** *(Optional[int])*: if not None, use a landmark-based rectangular distance matrix to estimate the energy distance instead of the full pairwise matrix. `nxc = min(chunk_size, len(x))` samples from x and `nyc = min(chunk_size, len(y))` samples from y are used as fixed "landmarks"; only distances from every sample to these landmarks are computed. If `chunk_size >= len(x)` and `chunk_size >= len(y)`, PTED falls back to the full (non-chunked) computation. If None, use the full dataset.
+* **chunk_size** *(Optional[int])*: if not None, estimate the energy distance from a rectangular distance matrix instead of the full pairwise matrix. Only distances from every sample to `min(chunk_size, len(x)) + min(chunk_size, len(y))` "column" points drawn from the pooled sample are computed, so the cost drops from `O(n^2 d)` to `O(n c d)`. If `chunk_size` covers both full datasets, PTED falls back to the exact full-matrix computation. If None, use the full dataset. Mutually exclusive with `n_columns`.
 * **two_tailed** *(bool)*: if True, compute a two-tailed p-value. This is useful if you want to reject the null hypothesis when x and y are either too similar or too different. If False, only checks for dissimilarity but is more sensitive. Default is True.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of permutation tests. Default is False.
+* **n_columns** *(Optional[int])*: the number of column points `c` directly. This is the preferred arg; `chunk_size` is the older one and simply maps onto it. Mutually exclusive with `chunk_size`.
+* **batch_size** *(Optional[int])*: number of permutations evaluated per matrix product. Larger values are faster (especially on GPU) at `O(batch_size * n)` extra memory. None picks a size that keeps a batch to a few million elements.
+* **rng**: seed, `np.random.Generator`, or None to draw from the global numpy state, so `np.random.seed` still controls reproducibility.
 
 ### Coverage test
 
@@ -324,6 +339,9 @@ def pted_coverage_test(
     pit_plot: Optional[str] = None,
     pit_confidence: float = 0.95,
     prog_bar: bool = False,
+    n_columns: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    rng=None,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
 ```
 
@@ -331,12 +349,17 @@ def pted_coverage_test(
 * **s** *(Union[np.ndarray, Tensor, jax.Array])*: Posterior samples. Shape (n_samples, n_sims, *D)
 * **permutations** *(int)*: number of permutations to run. This determines how accurately the p-value is computed.
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
-* **chunk_size** *(Optional[int])*: if not None, use a landmark-based rectangular distance matrix to estimate the energy distance instead of the full pairwise matrix. `nxc = min(chunk_size, len(x))` samples from x and `nyc = min(chunk_size, len(y))` samples from y are used as fixed "landmarks"; only distances from every sample to these landmarks are computed. If None, use the full dataset.
+* **chunk_size** *(Optional[int])*: if not None, estimate the energy distance from a rectangular distance matrix instead of the full pairwise matrix. Only distances from every sample to `min(chunk_size, len(x)) + min(chunk_size, len(y))` "column" points drawn from the pooled sample are computed, so the cost drops from `O(n^2 d)` to `O(n c d)`. If `chunk_size` covers both full datasets, PTED falls back to the exact full-matrix computation. If None, use the full dataset. Mutually exclusive with `n_columns`.
+
+  Because the ground truth is a single point, the per-simulation test runs in the `singleton` regime, where the permutation subgroup reaches only `n - c` distinct label assignments. Keep `chunk_size` well below the number of posterior samples.
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
 * **pit_plot** *(Optional[str])*: If given, the path/filename to save a Probability Integral Transform (PIT) plot of the per-simulation p-values against the expected uniform distribution, with a shaded KS confidence band.
 * **pit_confidence** *(float)*: Confidence level for the KS confidence band in the PIT plot. Default is 0.95 (95%). Only used when `pit_plot` is not None.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of simulations. Default is False.
+* **n_columns** *(Optional[int])*: the number of column points `c` directly. This is the preferred arg; `chunk_size` is the older one and simply maps onto it. Mutually exclusive with `chunk_size`.
+* **batch_size** *(Optional[int])*: number of permutations evaluated per matrix product. Larger values are faster (especially on GPU) at `O(batch_size * n)` extra memory. None picks a size that keeps a batch to a few million elements.
+* **rng**: seed, `np.random.Generator`, or None to draw from the global numpy state, so `np.random.seed` still controls reproducibility.
 
 ## GPU Compatibility
 
@@ -373,37 +396,55 @@ print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 
 If a GPU isn't enough to get PTED running fast enough for you, or if you are
 running into memory limitations, there are still options! We can use an
-approximation of the energy distance, in this case the test is still exact but
-less sensitive than it would be otherwise. Instead of building the full
-`(n_samp_x + n_samp_y) x (n_samp_x + n_samp_y)` pairwise distance matrix, PTED
-can build a smaller rectangular `(n_samp_x + n_samp_y) x (nxc + nyc)` matrix of
-distances from every sample to a fixed set of "landmark" samples, where `nxc =
-min(chunk_size, n_samp_x)` landmarks are drawn from x and `nyc = min(chunk_size,
-n_samp_y)` from y. Just set the `chunk_size` parameter to control how many
-landmarks are used. This rectangular matrix is computed only once; the
-permutation distribution is then obtained purely by re-indexing (permuting) its
-rows, which reassigns samples to the x/y groups without recomputing any
-distances. The larger the chunk size, the closer the estimate will be to the
-true energy distance, but it will take more compute.
+approximation of the energy distance; the test stays exact, it just becomes less
+sensitive than it would otherwise be. Instead of building the full `n x n`
+pairwise distance matrix (`n = n_samp_x + n_samp_y`), PTED builds a smaller
+rectangular `n x c` matrix of distances from every sample to `c` "column" points
+drawn from the pooled sample. Set `n_columns = c` to choose how many columns.
 
-Note that the computational complexity for standard PTED goes as `O((n_samp_x +
-n_samp_y)^2)` to build the full distance matrix, while the chunked version goes
-as `O((n_samp_x + n_samp_y) * (nxc + nyc))`, so plan your chunking accordingly.
-For a given chunk size, the computational complexity of PTED grows linearly
-with dataset size, much like other large scale (machine learning oriented) two
-sample tests.
+Building the full matrix costs `O(n^2 d)` and each permutation `O(n^2)`; the
+rectangular matrix costs `O(n c d)` and each permutation `O(n c)`. So for a
+fixed number of columns PTED grows linearly with dataset size, much like other
+large scale (machine learning oriented) two sample tests. Permutations are
+evaluated in batches as a single matrix product rather than one at a time, and
+everything heavy stays on whichever backend your arrays live on.
 
 Example:
 ```python
 from pted import pted
 import numpy as np
 
-x = np.random.normal(size = (500, 10)) # (n_samples_x, n_dimensions)
-y = np.random.normal(size = (400, 10)) # (n_samples_y, n_dimensions)
+x = np.random.normal(size = (5000, 10)) # (n_samples_x, n_dimensions)
+y = np.random.normal(size = (4000, 10)) # (n_samples_y, n_dimensions)
 
-p_value = pted(x, y, chunk_size = 50)
+p_value = pted(x, y, n_columns = 200)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
+
+### Why chunking is still exact
+
+The subtlety is that the columns cannot simply be re-split between the two
+groups after each shuffle. The column set `C` is chosen using the group labels
+(so that both groups are represented), which means the labels are no longer
+uniformly distributed once you condition on `C`. PTED handles this by confining
+permutations to the subgroup that fixes `C`: labels are shuffled within the
+column positions and within their complement, never between. `C` then stays put
+under every permutation and the observed labelling is exchangeable with the permuted
+ones. That is what makes the p-value exact. (`C` is chosen from sample positions
+and group labels only, never from the data values — picking columns by maximin,
+k-means or leverage would break the argument.)
+
+What you give up is sensitivity: the null spread grows like `sqrt(n / c)`, so the
+smallest detectable energy distance scales as `(n c)^-0.5` rather than `n^-1`.
+The detection threshold degrades as one over the square root of the compute.
+
+You also give up some p-value resolution, and this is most significant when one
+group holds a single point — which is exactly the per-simulation test inside
+`pted_coverage_test`. There the permutation subgroup only reaches `n - c`
+distinct label assignments, so the smallest attainable p-value is about `1 / (n
+- c)` no matter how many permutations you draw. Keep `chunk_size` well below the
+number of posterior samples in that case; PTED raises a
+`PermutationResolutionWarning` when the column count is too greedy.
 
 ## Citation
 
