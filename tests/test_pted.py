@@ -62,15 +62,19 @@ def test_pted_main():
 
 
 def test_pted_progress_bar(capsys):
-    pted.pted(np.array([[1, 2], [3, 4]]), np.array([[3, 2], [1, 4]]), permutations=42)
+    # Large enough that the permutation group dwarfs 42, so 42 draws really are
+    # taken; a tiny sample would be enumerated instead and the bar would count
+    # the group rather than the request.
+    np.random.seed(0)
+    x = np.random.normal(size=(10, 2))
+    y = np.random.normal(size=(10, 2))
+    pted.pted(x, y, permutations=42)
     captured = capsys.readouterr().err
     assert (
         "42/42" not in captured
     ), "progress bar showed up when prog_bar is set to False by default"
 
-    pted.pted(
-        np.array([[1, 2], [3, 4]]), np.array([[3, 2], [1, 4]]), permutations=42, prog_bar=True
-    )
+    pted.pted(x, y, permutations=42, prog_bar=True)
     captured = capsys.readouterr().err
     assert "42/42" in captured, "progress bar did not show when prog_bar is set to True"
 
@@ -146,12 +150,14 @@ def test_landmarks_mismatched_sizes(backend):
     # x has 200 samples, y has 30 samples; 80 landmarks puts all 30 y in L
     x = _to_backend(np.random.normal(size=(200, D)), backend)
     y = _to_backend(np.random.normal(size=(30, D)), backend)
-    p = pted.pted(x, y, n_landmarks=80)
+    # Pinned: under the null a two-tailed p-value is uniform, so an unpinned
+    # `p < 0.99` bound fails once in a hundred runs on its own.
+    p = pted.pted(x, y, n_landmarks=80, rng=0)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     # Different distributions should give small p-value even with mismatched sizes
     y_diff = _to_backend(np.random.uniform(size=(30, D)), backend)
-    p = pted.pted(x, y_diff, n_landmarks=80)
+    p = pted.pted(x, y_diff, n_landmarks=80, rng=0)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 

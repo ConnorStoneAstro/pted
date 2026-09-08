@@ -5,7 +5,14 @@ from math import comb
 import numpy as np
 from scipy.spatial.distance import cdist
 
+from scipy.stats import kstwo
+
 from pted.utils import (
+    _band_accept_probability,
+    _lattice_band,
+    _sampled_label_blocks,
+    _lattice_counts,
+    _enumerate_label_blocks,
     PermutationResolutionWarning,
     allocate_landmarks,
     two_tailed_p,
@@ -14,12 +21,10 @@ from pted.utils import (
     hdp_coverage_test,
     permutation_energy_test,
     _cdist,
-    _draw_labels,
+    _label_drawer,
     _evaluate_statistic,
     _index_like,
     _prepare_statistic,
-    _random_permutation,
-    _to_scalar,
 )
 
 try:
@@ -35,6 +40,8 @@ except ImportError:
     jnp = None
 
 import pytest
+
+BACKENDS = ["numpy", "torch", "jax"]
 
 
 def _require_backend(backend):
@@ -96,46 +103,6 @@ def test_hdp_coverage_test():
     assert pvalue < 0.01, "p-value should be small for poorly calibrated posterior samples"
     pvalue = hdp_coverage_test(ground_truth, posterior_samples, two_tailed=False)
     assert pvalue > 0.01, "p-value should not be small for underconfident and one_tailed test"
-
-
-@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
-def test_to_scalar(backend):
-    if backend == "torch" and torch is None:
-        pytest.skip("torch not installed")
-    if backend == "jax" and jax is None:
-        pytest.skip("jax not installed")
-
-    if backend == "numpy":
-        x = np.array(5)
-
-    elif backend == "torch":
-        x = torch.tensor(5)
-
-    elif backend == "jax":
-        x = jnp.array(5)
-
-    # Test with scalar
-    assert _to_scalar(x, backend) == 5
-
-
-@pytest.mark.parametrize("backend", ["numpy", "torch", "jax"])
-def test_random_permutation(backend):
-    if backend == "torch" and torch is None:
-        pytest.skip("torch not installed")
-    if backend == "jax" and jax is None:
-        pytest.skip("jax not installed")
-
-    D = np.arange(16).reshape(4, 4)
-    if backend == "torch":
-        D = torch.tensor(D)
-    elif backend == "jax":
-        D = jnp.array(D)
-
-    permuted_D = _random_permutation(D, backend=backend)
-
-    assert set(np.array(permuted_D.flatten()).tolist()) == set(
-        np.array(D.flatten()).tolist()
-    ), "Permutation should contain all original elements"
 
 
 # ---------------------------------------------------------------------------
@@ -240,21 +207,27 @@ def test_allocate_landmarks_errors():
         permutation_energy_test(np.zeros((0, 2)), np.zeros((5, 2)), permutations=1)
 
 
+def _prep_for(n1, n2, c, seed=3, backend="numpy"):
+    """An allocation plus its prepared statistic, on the given backend."""
+    rng = np.random.default_rng(seed)
+    alloc = allocate_landmarks(n1, n2, c, rng)
+    z = rng.standard_normal((n1 + n2, 4))
+    if backend == "torch":
+        z = torch.tensor(z)
+    elif backend == "jax":
+        z = jnp.array(z)
+    zc = z if alloc["regime"] == "full" else z[_index_like(alloc["landmarks"], z, backend)]
+    return alloc, _prepare_statistic(_cdist(z, zc, backend), alloc, backend)
+
+
 @pytest.mark.parametrize("n1,n2,c,regime", ALLOCATIONS)
 def test_draw_labels_stays_in_subgroup(n1, n2, c, regime):
-    """Permutations never move a label across the C / C^c boundary, so the
-    per-group column counts -- and hence every normalising constant -- are
+    """Permutations never move a label across the L / L^c boundary, so the
+    per-group landmark counts -- and hence every normalising constant -- are
     fixed. This is what makes the observed labelling exchangeable with the
     permuted ones."""
-    rng = np.random.default_rng(3)
-    alloc = allocate_landmarks(n1, n2, c, rng)
-    n = n1 + n2
-    base = np.zeros(n)
-    base[alloc["small_idx"]] = 1.0
-    in_l = np.zeros(n, bool)
-    in_l[alloc["landmarks"]] = True
-
-    U = _draw_labels(base, np.flatnonzero(in_l), np.flatnonzero(~in_l), 200, rng.spawn(2))
+    alloc, prep = _prep_for(n1, n2, c)
+    U = np.asarray(_label_drawer(prep, np.random.default_rng(17))(200))
 
     assert np.all(np.isin(U, [0.0, 1.0]))
     assert np.all(U.sum(1) == alloc["n_small"]), "small group size is preserved"
@@ -282,7 +255,7 @@ def test_statistic_matches_brute_force_block_means(n1, n2, c, regime):
     U = np.concatenate(
         [
             prep["base_small"][None, :],
-            _draw_labels(prep["base_small"], prep["idx_l"], prep["idx_o"], 5, rng.spawn(2)),
+            _label_drawer(prep, np.random.default_rng(11))(5),
         ]
     )
     got = _evaluate_statistic(prep, U)
@@ -324,7 +297,7 @@ def test_statistic_backend_agreement(backend):
             U = np.concatenate(
                 [
                     prep["base_small"][None, :],
-                    _draw_labels(prep["base_small"], prep["idx_l"], prep["idx_o"], 8, rng.spawn(2)),
+                    _label_drawer(prep, np.random.default_rng(13))(8),
                 ]
             )
         results[be] = _evaluate_statistic(prep, U)
@@ -332,31 +305,70 @@ def test_statistic_backend_agreement(backend):
     assert np.allclose(results["numpy"], results[backend], rtol=1e-4, atol=1e-4)
 
 
-def test_draw_labels_independent_of_batch_size():
-    """The two label streams are consumed row by row, so splitting a run into
-    batches yields bit-identical permutations."""
-    base = np.r_[np.ones(5), np.zeros(15)]
-    idx_l, idx_o = np.arange(12), np.arange(12, 20)
-    whole = _draw_labels(base, idx_l, idx_o, 10, np.random.default_rng(9).spawn(2))
-    rngs = np.random.default_rng(9).spawn(2)
-    split = np.concatenate([_draw_labels(base, idx_l, idx_o, k, rngs) for k in (3, 3, 4)])
-    assert np.array_equal(whole, split)
+@pytest.mark.parametrize("backend", ["torch", "jax"])
+@pytest.mark.parametrize("n1,n2,c", [(40, 50, 30), (6, 80, 40), (1, 60, 12)])
+def test_device_draw_labels_stays_in_subgroup(backend, n1, n2, c):
+    """The on-device draw obeys the same subgroup constraints as the numpy
+    one -- the labels moved to the accelerator, the guarantees did not."""
+    _require_backend(backend)
+    alloc, prep = _prep_for(n1, n2, c, backend=backend)
+    U = np.asarray(_label_drawer(prep, np.random.default_rng(23))(128))
+
+    assert np.all(np.isin(U, [0.0, 1.0]))
+    assert np.all(U.sum(1) == alloc["n_small"])
+    assert np.all(U[:, alloc["landmarks"]].sum(1) == alloc["n_small_landmarks"])
+    if alloc["reference_size"] > 100:
+        assert len(np.unique(U, axis=0)) > 1
 
 
-def test_statistic_independent_of_batch_size():
-    """Batching is purely a memory/throughput knob: with the same seed it draws
-    the same permutations, so the statistics agree to within the reordering
-    that a different matmul shape costs in floating point."""
-    rng_kwargs = dict(permutations=64, n_landmarks=30, rng=12345)
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_label_draws_are_reproducible(backend):
+    """A fixed rng pins the draw, and a run yields exactly `permutations` valid
+    rows in blocks no larger than batch_size."""
+    _require_backend(backend)
+    _, prep = _prep_for(20, 30, 50, backend=backend)
+
+    a = np.asarray(_label_drawer(prep, np.random.default_rng(5))(40))
+    b = np.asarray(_label_drawer(prep, np.random.default_rng(5))(40))
+    assert np.array_equal(a, b), "the same rng must give the same draw"
+
+    for batch in (7, 40, 1000):
+        rng = np.random.default_rng(5)
+        blocks = [np.asarray(x) for x in _sampled_label_blocks(prep, 40, batch, rng)]
+        assert sum(len(x) for x in blocks) == 40
+        assert max(len(x) for x in blocks) <= batch
+        rows = np.concatenate(blocks)
+        assert np.all(rows.sum(1) == prep["base_small"].sum())
+
+
+def test_evaluate_is_independent_of_batch_size():
+    """Splitting one set of labellings across batches must not change their
+    statistics, beyond the reordering a different matmul shape costs in
+    floating point. (Which labellings get drawn does depend on batch_size --
+    the draw is a running stream -- but every batching is an exact test.)"""
     x = np.random.default_rng(0).standard_normal((50, 4))
     y = np.random.default_rng(1).standard_normal((70, 4))
-    ref_stat, ref_perm = permutation_energy_test(x, y, batch_size=1, **rng_kwargs)
-    for batch in (7, 64, 1000):
-        stat, perm = permutation_energy_test(x, y, batch_size=batch, **rng_kwargs)
-        assert stat == ref_stat
-        assert np.allclose(
-            perm, ref_perm, rtol=1e-10, atol=1e-12
-        ), f"batch_size={batch} changed the null draws"
+    alloc, prep = _prep_for(50, 70, 30)
+    U = _label_drawer(prep, np.random.default_rng(2))(64)
+
+    whole = _evaluate_statistic(prep, U)
+    for batch in (1, 7, 64):
+        pieces = np.concatenate(
+            [_evaluate_statistic(prep, U[s : s + batch]) for s in range(0, len(U), batch)]
+        )
+        assert np.allclose(pieces, whole, rtol=1e-10, atol=1e-12), f"batch_size={batch}"
+
+
+def test_every_batch_size_gives_a_valid_test():
+    """batch_size stays a free knob: any value returns the requested number of
+    null statistics and a p-value in range."""
+    x = np.random.default_rng(0).standard_normal((50, 4))
+    y = np.random.default_rng(1).standard_normal((70, 4))
+    for batch in (1, 7, 64, 1000):
+        stat, perm = permutation_energy_test(
+            x, y, permutations=64, n_landmarks=30, rng=12345, batch_size=batch
+        )
+        assert len(perm) == 64 and np.all(np.isfinite(perm))
 
 
 def test_n_landmarks_covering_the_sample_is_the_full_test():
@@ -413,3 +425,180 @@ def test_permutation_resolution_warning():
         warnings.simplefilter("error", PermutationResolutionWarning)
         permutation_energy_test(x, y, permutations=100, n_landmarks=8)
         permutation_energy_test(x, y, permutations=100, n_landmarks=55)
+
+
+# ---------------------------------------------------------------------------
+# PIT plot confidence bands
+# ---------------------------------------------------------------------------
+
+
+def _band_rejects(pvals, t, lower, upper):
+    counts = _lattice_counts(np.asarray(pvals), t)[0] / len(pvals)
+    return bool(np.any((counts < lower - 1e-12) | (counts > upper + 1e-12)))
+
+
+def _ks_rejects(pvals, d_crit):
+    n = len(pvals)
+    s = np.sort(pvals)
+    i = np.arange(1, n + 1)
+    return max(np.max(i / n - s), np.max(s - (i - 1) / n)) > d_crit
+
+
+def test_lattice_band_is_deterministic_and_pinches_at_the_corners():
+    """The band tracks the binomial variance of the ECDF count, so it is far
+    tighter at the ends than a constant-half-width KS band."""
+    n, confidence = 100, 0.95
+    t, lower, upper, _, _ = _lattice_band(n, 151, confidence)
+    again, lower2, _, _, _ = _lattice_band(n, 151, confidence)
+    assert np.array_equal(t, again) and np.array_equal(lower, lower2)
+
+    assert np.all(lower <= upper)
+    half = (upper - lower) / 2
+    assert half[0] < half[len(t) // 2] and half[-1] < half[len(t) // 2], "must pinch at the ends"
+    assert half[np.searchsorted(t, 0.05)] < kstwo.ppf(confidence, n)
+
+
+@pytest.mark.parametrize("n,lattice", [(100, 151), (100, 1000), (60, 41), (100, None)])
+def test_lattice_band_level_is_exact(n, lattice):
+    """The escape probability is computed by a forward recursion over the
+    counting process, not estimated, so the band's level is known exactly --
+    and it lands on the target rather than being conservative."""
+    confidence = 0.95
+    _, _, _, _, achieved = _lattice_band(n, lattice, confidence)
+    assert abs((1 - achieved) - (1 - confidence)) < 0.002, f"achieved {1 - achieved}"
+
+
+def test_band_recursion_matches_brute_force():
+    """The forward recursion agrees with simulating the null directly."""
+    n, L, trials = 40, 61, 40000
+    t, lo, hi, _, _ = _lattice_band(n, L, 0.95)
+    lower, upper = np.round(lo * n).astype(int), np.round(hi * n).astype(int)
+    exact = _band_accept_probability(t, n, lower, upper)
+
+    rng = np.random.default_rng(0)
+    hits = 0
+    for _ in range(0, trials, 4000):
+        p = rng.integers(1, L + 1, size=(4000, n)) / L
+        counts = _lattice_counts(p, t)
+        hits += int(np.sum(np.all((counts >= lower) & (counts <= upper), axis=1)))
+    mc = hits / trials
+    assert abs(exact - mc) < 4 * np.sqrt(mc * (1 - mc) / trials), f"{exact} vs {mc}"
+
+
+def test_lattice_band_holds_level_against_simulation():
+    """Sanity check the level end to end, on the coarse lattice a real
+    coverage test produces -- where an order-statistic band rejects ~60%."""
+    n, lattice, confidence, trials = 100, 151, 0.95, 4000
+    t, lower, upper, _, _ = _lattice_band(n, lattice, confidence)
+    rng = np.random.default_rng(3)
+    hits = 0
+    for _ in range(trials):
+        p = rng.integers(1, lattice + 1, size=n) / lattice
+        hits += _band_rejects(p, t, lower, upper)
+    rate = hits / trials  # se = 0.0034
+    assert abs(rate - (1 - confidence)) < 0.015, f"rejected {rate}"
+
+
+def test_lattice_band_beats_ks_on_tail_deviations():
+    """More power against the p-value shapes a miscalibrated posterior makes,
+    on the coarse lattice a real coverage test produces."""
+    n, L, trials = 100, 151, 1500
+    t, lower, upper, _, _ = _lattice_band(n, L, 0.95)
+    d_crit = kstwo.ppf(0.95, n)
+    rng = np.random.default_rng(4)
+    for a, b in ((0.7, 1.0), (0.85, 0.85)):  # skewed low, and U-shaped
+        draws = [np.ceil(rng.beta(a, b, n) * L) / L for _ in range(trials)]
+        ks = np.mean([_ks_rejects(p, d_crit) for p in draws])
+        lat = np.mean([_band_rejects(p, t, lower, upper) for p in draws])
+        assert lat > ks, f"Beta({a},{b}): lattice {lat:.3f} did not beat KS {ks:.3f}"
+
+
+def test_pit_plot_writes_a_file(tmp_path):
+    rng = np.random.default_rng(0)
+    for label, pvals, lattice in (
+        ("continuous", rng.random(100), None),
+        ("lattice", rng.integers(1, 152, size=100) / 151, 151),
+    ):
+        out = tmp_path / f"pit_{label}.pdf"
+        pit_plot(pvals, str(out), lattice=lattice)
+        assert out.exists()
+
+
+def test_pit_plot_warns_when_discrete_pvalues_have_no_lattice(tmp_path):
+    """Discrete p-values need their lattice declared; without it the band is
+    built from the wrong null. Saying so is better than silently over-rejecting."""
+    rng = np.random.default_rng(1)
+    coarse = rng.integers(1, 201, size=100) / 200  # 199 permutations
+
+    with pytest.warns(UserWarning, match="no lattice was given"):
+        pit_plot(coarse, str(tmp_path / "coarse.pdf"))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        pit_plot(coarse, str(tmp_path / "told.pdf"), lattice=200)
+        pit_plot(rng.random(100), str(tmp_path / "cont.pdf"))
+
+
+# ---------------------------------------------------------------------------
+# Exhaustive enumeration of small permutation groups
+# ---------------------------------------------------------------------------
+
+
+def test_small_groups_are_enumerated_not_sampled():
+    """Asking for more permutations than the subgroup has members walks the
+    whole group instead, returning reference_size - 1 null statistics."""
+    x = np.random.default_rng(0).standard_normal((1, 3))
+    y = np.random.default_rng(1).standard_normal((60, 3))
+    reference = allocate_landmarks(1, 60, 61, rng=0)["reference_size"]
+    assert reference == 61
+
+    _, permute = permutation_energy_test(x, y, permutations=1000, rng=0)
+    assert len(permute) == reference - 1, "should have enumerated the group"
+
+    # ask for fewer than the group holds and it samples, as before
+    _, permute = permutation_energy_test(x, y, permutations=30, rng=0)
+    assert len(permute) == 30
+
+
+def test_enumeration_covers_the_group_exactly_once():
+    """Every assignment the subgroup reaches appears once, bar the observed."""
+    n1, n2, m = 1, 12, 5
+    alloc = allocate_landmarks(n1, n2, m, rng=0)
+    z = np.random.default_rng(0).standard_normal((n1 + n2, 2))
+    prep = _prepare_statistic(cdist(z, z[alloc["landmarks"]]), alloc, "numpy")
+
+    rows = np.concatenate(list(_enumerate_label_blocks(prep, 4)))
+    assert len(rows) == alloc["reference_size"] - 1
+    assert len(np.unique(rows, axis=0)) == len(rows), "no assignment repeats"
+    assert np.all(rows.sum(1) == alloc["n_small"]), "group size preserved"
+    assert np.all(rows[:, alloc["landmarks"]].sum(1) == alloc["n_small_landmarks"])
+    assert not np.any(np.all(rows == prep["base_small"], axis=1)), "observed excluded"
+
+
+def test_enumerated_pvalues_are_exactly_lattice_uniform():
+    """Enumeration removes the tie inflation that sampling a small group
+    causes, so P(p <= t) sits on the lattice instead of below it."""
+    from pted.pted import pted as pted_api
+
+    nsamp, trials = 40, 6000  # group of 41, so p lands on multiples of 1/41
+    rng = np.random.default_rng(5)
+    pvals = np.empty(trials)
+    for t in range(trials):
+        loc, sd = rng.standard_normal(2) * 3, rng.uniform(1, 3, size=2)
+        pvals[t] = pted_api(
+            rng.normal(loc, sd, size=(1, 2)),
+            rng.normal(loc, sd, size=(nsamp, 2)),
+            permutations=500,
+            two_tailed=False,
+            rng=rng,
+        )
+    R = nsamp + 1
+    assert len(np.unique(pvals)) <= R
+    # a valid p-value on an R-point lattice has P(p <= t) = floor(tR)/R
+    for t in (0.1, 0.2, 0.5):
+        expected = np.floor(t * R) / R
+        observed = np.mean(pvals <= t)
+        assert abs(observed - expected) < 4 * np.sqrt(
+            expected * (1 - expected) / trials
+        ), f"P(p<={t}) was {observed:.4f}, lattice value is {expected:.4f}"
+        assert observed <= t + 1e-9, "must stay valid"

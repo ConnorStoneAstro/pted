@@ -89,7 +89,12 @@ print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 
 Note, you can also provide a filename via a parameter: `sbc_histogram = "sbc_hist.pdf"` and this will generate an SBC histogram from the test[^1].
 
-You can also generate a Probability Integral Transform (PIT) plot via `pit_plot = "pit.pdf"` for `pted_coverage_test`. The PIT plot shows the empirical CDF of the p-values against the expected uniform CDF (1:1 diagonal), along with a shaded KS confidence band determined by `pit_confidence` (95% by default). Any portion of the curve that deviates outside the band is evidence that the p-values are not uniformly distributed, at a significance level of `1 - pit_confidence` (5% by default), indicating a potentially miscalibrated posterior.
+You can also generate a Probability Integral Transform (PIT) plot via `pit_plot = "pit.pdf"` for `pted_coverage_test`. The PIT plot shows the empirical CDF of the p-values against the expected uniform CDF (1:1 diagonal), along with a shaded band determined by `pit_confidence` (95% by default). The band is simultaneous: under the null the whole curve stays inside it with probability `pit_confidence`, so any portion of the curve that pokes out is evidence of non-uniform p-values at significance `1 - pit_confidence`, indicating a potentially miscalibrated posterior.
+
+The band is built from the exact null distribution of the p-values. The ECDF can only move where the p-values can actually land, so rather than constraining order statistics the band constrains the counts there.
+Working with counts rather than order statistics is what makes this usable here. Permutation p-values are discrete — after enumeration they are exactly uniform on a grid of `L = len(permute) + 1` points — and ties are precisely what a binomial count expects.
+`pted_coverage_test` works out the lattice size and passes it in for you.
+Ultimately, this means that the fact we only use a finite number of simulations to compute the coverage test does not affect the validity of the bands in the PIT plot; any point that sticks out of the grey shaded area indicates possible miscalibration at the given significance level (default 95%).
 
 ## How it works
 
@@ -352,7 +357,7 @@ def pted_coverage_test(
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
 * **pit_plot** *(Optional[str])*: If given, the path/filename to save a Probability Integral Transform (PIT) plot of the per-simulation p-values against the expected uniform distribution, with a shaded KS confidence band.
-* **pit_confidence** *(float)*: Confidence level for the KS confidence band in the PIT plot. Default is 0.95 (95%). Only used when `pit_plot` is not None.
+* **pit_confidence** *(float)*: Confidence level for the PIT plot's simultaneous band. Default is 0.95 (95%). Only used when `pit_plot` is not None.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of simulations. Default is False.
 * **batch_size** *(Optional[int])*: number of permutations evaluated per matrix product. Larger values are faster (especially on GPU) at `O(batch_size * n)` extra memory. None picks a size that keeps a batch to a few million elements.
 * **rng**: seed, `np.random.Generator`, or None to draw from the global numpy state, so `np.random.seed` still controls reproducibility.
@@ -417,6 +422,22 @@ y = np.random.normal(size = (4000, 10)) # (n_samples_y, n_dimensions)
 p_value = pted(x, y, n_landmarks = 200)
 print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
 ```
+
+### Enumerating small permutation groups
+
+If the permutation subgroup turns out to have no more than `permutations`
+members, PTED evaluates *all* of it rather than sampling. Sampling a small
+group keeps redrawing the observed labelling, and each of those ties inflates
+the p-value under the `>=` convention: with a group of 151 and 199 draws,
+`P(p <= 0.02)` came out at 0.0169 instead of 0.0200. Walking the group instead
+puts it at 0.0195, leaving only the unavoidable granularity of a 151-point
+lattice — and it costs *less* compute, since 151 evaluations beat 199. This
+mostly matters for `pted_coverage_test`, where the ground truth is a single
+point and the group is only `max(m, n - m)` large.
+
+One consequence: when this kicks in, `return_all` gives back
+`reference_size - 1` permuted statistics rather than `permutations` of them.
+The p-value is then exact rather than sampled.
 
 ### Why using landmarks is still exact
 

@@ -83,6 +83,9 @@ def pted(
             accurately the p-value is computed.
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value.
+            The permuted statistics are ``permutations`` random draws, or the
+            whole permutation subgroup when that is smaller (see the note
+            below), so check its length rather than assuming.
             bool (default: False)
         n_landmarks (Optional[int]): if not None, estimate the energy distance
             from a rectangular distance matrix instead of the full pairwise
@@ -129,6 +132,13 @@ def pted(
         attainable p-value is about the reciprocal of that, however many
         permutations are drawn. A ``PermutationResolutionWarning`` is raised
         when the reachable set is too small to resolve the p-value requested.
+        When the permutation subgroup has no more than ``permutations``
+        members, PTED walks the whole group instead of sampling it. That is
+        both cheaper and exact: sampling a small group keeps redrawing the
+        observed labelling, and every such tie inflates the p-value under the
+        ``>=`` convention. In that case the returned array of permuted
+        statistics holds ``reference_size - 1`` entries rather than
+        ``permutations``.
     """
     assert type(x) == type(y), f"x and y must be of the same type, not {type(x)} and {type(y)}"
     assert len(x.shape) >= 2, f"x must be at least 2D, not {x.shape}"
@@ -153,14 +163,17 @@ def pted(
         rng=rng,
     )
 
-    # Compute p-value
+    # Compute p-value. The null set is `permutations` random draws, or the
+    # whole permutation subgroup when that is smaller, so count what came back
+    # rather than what was asked for.
+    n_null = len(permute)
     if two_tailed:
         q = 2 * min(np.sum(permute >= test), np.sum(permute <= test))
-        q = min(q, permutations)
+        q = min(q, n_null)
     else:
         q = np.sum(permute >= test)
 
-    pval = (1.0 + q) / (1.0 + permutations)
+    pval = (1.0 + q) / (1.0 + n_null)
 
     if return_all:
         return test, permute, pval
@@ -250,11 +263,11 @@ def pted_coverage_test(
             Probability Integral Transform (PIT) plot. The plot shows the
             empirical CDF of the per-simulation p-values against the expected
             uniform CDF (1:1 diagonal), together with a shaded KS confidence
-            band. Deviations outside the band indicate that the p-values are
-            not uniformly distributed. Default is None (no plot saved).
-        pit_confidence (float): Confidence level for the KS confidence band
-            in the PIT plot. Default is 0.95 (95%). Only used when
-            ``pit_plot`` is not None.
+            band built from the exact null of the p-values. Deviations
+            outside the band indicate that the p-values are not uniformly
+            distributed. Default is None (no plot saved).
+        pit_confidence (float): Confidence level for the PIT plot's band.
+            Default is 0.95 (95%). Only used when ``pit_plot`` is not None.
         prog_bar (bool): If True, show a progress bar to track the progress
             of simulations. Default is False.
         batch_size (Optional[int]): number of permutations evaluated per matrix
@@ -291,6 +304,13 @@ def pted_coverage_test(
         attainable p-value is about the reciprocal of that, however many
         permutations are drawn. A ``PermutationResolutionWarning`` is raised
         when the reachable set is too small to resolve the p-value requested.
+        When the permutation subgroup has no more than ``permutations``
+        members, PTED walks the whole group instead of sampling it. That is
+        both cheaper and exact: sampling a small group keeps redrawing the
+        observed labelling, and every such tie inflates the p-value under the
+        ``>=`` convention. In that case the returned array of permuted
+        statistics holds ``reference_size - 1`` entries rather than
+        ``permutations``.
     """
     nsamp, nsim, *_ = s.shape
     assert nsim > 0, "need some simulations to run test, got 0 simulations"
@@ -329,12 +349,19 @@ def pted_coverage_test(
 
     # Simulation-Based-Calibration histogram
     if sbc_histogram is not None:
-        ranks = np.sum(test_stats[:, None] >= permute_stats, axis=1) / permutations
+        ranks = np.sum(test_stats[:, None] >= permute_stats, axis=1) / permute_stats.shape[1]
         simulation_based_calibration_histogram(ranks, sbc_histogram, bins=sbc_bins)
 
     # Probability Integral Transform (PIT) plot
     if pit_plot is not None:
-        _pit_plot(pvals, pit_plot, confidence=pit_confidence)
+        # Under H0 a p-value of (1 + q) / (1 + n_null) is uniform on that many
+        # lattice points, so the band can be built from the exact null.
+        _pit_plot(
+            pvals,
+            pit_plot,
+            confidence=pit_confidence,
+            lattice=permute_stats.shape[1] + 1,
+        )
 
     # Compute p-value
     if nsim == 1:
