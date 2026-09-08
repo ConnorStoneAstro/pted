@@ -121,7 +121,7 @@ def test_pted_coverage_full(backend):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_pted_chunk(backend):
+def test_landmarks(backend):
     _require_backend(backend)
     np.random.seed(42)
 
@@ -129,29 +129,29 @@ def test_pted_chunk(backend):
     D = 10
     x = _to_backend(np.random.normal(size=(1000, D)), backend)
     y = _to_backend(np.random.normal(size=(1000, D)), backend)
-    p = pted.pted(x, y, chunk_size=100)
+    p = pted.pted(x, y, n_landmarks=200)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y = _to_backend(np.random.uniform(size=(1000, D)), backend)
-    p = pted.pted(x, y, chunk_size=100)
+    p = pted.pted(x, y, n_landmarks=200)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_pted_chunk_mismatched_sizes(backend):
+def test_landmarks_mismatched_sizes(backend):
     """Chunked PTED works correctly when x and y have different sizes."""
     _require_backend(backend)
     np.random.seed(0)
     D = 5
-    # x has 200 samples, y has 30 samples; chunk_size=50 → nxc=50, nyc=30 landmarks
+    # x has 200 samples, y has 30 samples; 80 landmarks puts all 30 y in L
     x = _to_backend(np.random.normal(size=(200, D)), backend)
     y = _to_backend(np.random.normal(size=(30, D)), backend)
-    p = pted.pted(x, y, chunk_size=50)
+    p = pted.pted(x, y, n_landmarks=80)
     assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     # Different distributions should give small p-value even with mismatched sizes
     y_diff = _to_backend(np.random.uniform(size=(30, D)), backend)
-    p = pted.pted(x, y_diff, chunk_size=50)
+    p = pted.pted(x, y_diff, n_landmarks=80)
     assert p < 1e-2, f"p-value {p} is not in the expected range (~0)"
 
 
@@ -256,13 +256,13 @@ def test_pted_jax_no_jax(monkeypatch):
         pted.utils.permutation_energy_test(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10)
 
 
-def test_pted_chunk_jax_no_jax(monkeypatch):
+def test_landmarks_jax_no_jax(monkeypatch):
     """permutation_energy_test raises AssertionError when a jax array is passed but JAX is not installed."""
     monkeypatch.setattr("pted.utils.jax", None)
     monkeypatch.setattr("pted.utils.is_jax_array", lambda o: True)
     with pytest.raises(AssertionError, match="JAX is not installed"):
         pted.utils.permutation_energy_test(
-            np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, chunk_size=2
+            np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, n_landmarks=2
         )
 
 
@@ -275,14 +275,14 @@ def test_pted_torch_no_torch(monkeypatch):
         pted.utils.permutation_energy_test(np.zeros((5, 2)), np.zeros((5, 2)), permutations=10)
 
 
-def test_pted_chunk_torch_no_torch(monkeypatch):
+def test_landmarks_torch_no_torch(monkeypatch):
     """permutation_energy_test raises AssertionError when a torch tensor is passed but torch is not installed."""
     fake_torch = types.SimpleNamespace(__version__="null")
     monkeypatch.setattr("pted.utils.torch", fake_torch)
     monkeypatch.setattr("pted.utils.is_torch_tensor", lambda o: True)
     with pytest.raises(AssertionError, match="PyTorch is not installed"):
         pted.utils.permutation_energy_test(
-            np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, chunk_size=2
+            np.zeros((5, 2)), np.zeros((5, 2)), permutations=10, n_landmarks=2
         )
 
 
@@ -309,31 +309,22 @@ def test_cdist_matches_scipy(backend):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_pted_n_columns(backend):
-    """n_columns names the column count directly, and agrees with the
-    chunk_size that maps onto the same value."""
+def test_pted_n_landmarks(backend):
+    """n_landmarks selects how many points every sample is measured against."""
     _require_backend(backend)
     np.random.seed(11)
     x = _to_backend(np.random.normal(size=(300, 6)), backend)
     y = _to_backend(np.random.normal(size=(300, 6)), backend)
 
-    # chunk_size=40 on two equal groups requests 40 + 40 columns
-    p_chunk = pted.pted(x, y, chunk_size=40, rng=0)
-    p_cols = pted.pted(x, y, n_columns=80, rng=0)
-    assert p_chunk == p_cols
+    p = pted.pted(x, y, n_landmarks=80)
+    assert 1e-2 < p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
 
     y_diff = _to_backend(np.random.uniform(size=(300, 6)), backend)
-    assert pted.pted(x, y_diff, n_columns=80) < 1e-2
+    assert pted.pted(x, y_diff, n_landmarks=80) < 1e-2
 
-    # n_columns covering the pooled sample is just the full test
-    assert pted.pted(x, y, n_columns=10_000, rng=3) == pted.pted(x, y, rng=3)
-
-
-def test_pted_column_args_are_exclusive():
-    x = np.random.normal(size=(20, 3))
-    y = np.random.normal(size=(20, 3))
-    with pytest.raises(ValueError, match="not both"):
-        pted.pted(x, y, chunk_size=5, n_columns=10)
+    # a landmark count covering the pooled sample is just the full test
+    assert pted.pted(x, y, n_landmarks=10_000, rng=3) == pted.pted(x, y, rng=3)
+    assert pted.pted(x, y, n_landmarks=600, rng=3) == pted.pted(x, y, rng=3)
 
 
 def test_pted_rng_is_reproducible():
@@ -342,38 +333,38 @@ def test_pted_rng_is_reproducible():
     x = np.random.normal(size=(60, 4))
     y = np.random.normal(size=(60, 4))
 
-    a = pted.pted(x, y, permutations=200, n_columns=30, rng=7, return_all=True)
-    b = pted.pted(x, y, permutations=200, n_columns=30, rng=7, return_all=True)
+    a = pted.pted(x, y, permutations=200, n_landmarks=30, rng=7, return_all=True)
+    b = pted.pted(x, y, permutations=200, n_landmarks=30, rng=7, return_all=True)
     assert a[0] == b[0] and np.array_equal(a[1], b[1]) and a[2] == b[2]
 
     np.random.seed(4)
-    c = pted.pted(x, y, permutations=200, n_columns=30, return_all=True)
+    c = pted.pted(x, y, permutations=200, n_landmarks=30, return_all=True)
     np.random.seed(4)
-    d = pted.pted(x, y, permutations=200, n_columns=30, return_all=True)
+    d = pted.pted(x, y, permutations=200, n_landmarks=30, return_all=True)
     assert np.array_equal(c[1], d[1]), "np.random.seed should still pin the permutations"
 
 
 @pytest.mark.parametrize(
-    "n1,n2,n_columns,regime",
+    "n1,n2,n_landmarks,regime",
     [
         (60, 60, 24, "proportional"),
         (1, 100, 11, "singleton"),
         (1, 40, 30, "singleton"),  # c > n/2, so the lone point sits inside C
     ],
 )
-def test_chunked_pvalues_are_calibrated(n1, n2, n_columns, regime):
+def test_landmark_pvalues_are_calibrated(n1, n2, n_landmarks, regime):
     """Type-I error under H0 must match the nominal rate.
 
-    This is the property the chunked test exists to preserve, and the one the
+    This is the property the landmark test exists to preserve, and the one the
     earlier landmark-reshuffling scheme lost: because it re-split the columns
     by group after each permutation while the observed statistic always used a
     perfectly balanced split, the observed value was not exchangeable with the
     permuted ones. It rejected at 29% (proportional) and 84% (singleton) for a
     nominal 5%. Fixed seed, so this is deterministic rather than flaky.
     """
-    from pted.utils import allocate_columns
+    from pted.utils import allocate_landmarks
 
-    assert allocate_columns(n1, n2, n_columns, rng=0)["regime"] == regime
+    assert allocate_landmarks(n1, n2, n_landmarks, rng=0)["regime"] == regime
 
     trials, permutations = 600, 49
     rng = np.random.default_rng(20240904)
@@ -383,7 +374,7 @@ def test_chunked_pvalues_are_calibrated(n1, n2, n_columns, regime):
         x = rng.standard_normal((n1, 4))
         y = rng.standard_normal((n2, 4))
         pvals[t] = pted.pted(
-            x, y, permutations=permutations, n_columns=n_columns, two_tailed=False, rng=rng
+            x, y, permutations=permutations, n_landmarks=n_landmarks, two_tailed=False, rng=rng
         )
 
     for nominal, tol in ((0.10, 0.05), (0.20, 0.06)):
@@ -407,8 +398,8 @@ def test_coverage_test_rng_is_not_shared_across_simulations():
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_coverage_test_with_chunking(backend):
-    """Chunked coverage runs end to end and still separates a calibrated
+def test_coverage_test_with_landmarks(backend):
+    """Landmark coverage runs end to end and still separates a calibrated
     posterior from an over/under-confident one."""
     _require_backend(backend)
     rng = np.random.default_rng(3)
@@ -425,8 +416,10 @@ def test_coverage_test_with_chunking(backend):
         np.stack([v.mean(0) + (v - v.mean(0)) * 0.4 for v in draws], axis=1), backend
     )
 
-    p_ok = pted.pted_coverage_test(g, ok, permutations=199, chunk_size=30)
+    p_ok = pted.pted_coverage_test(g, ok, permutations=199, n_landmarks=30)
     assert 1e-2 < p_ok < 0.99, f"calibrated posterior gave p={p_ok}"
 
-    p_over = pted.pted_coverage_test(g, over, permutations=199, chunk_size=30, warn_confidence=None)
+    p_over = pted.pted_coverage_test(
+        g, over, permutations=199, n_landmarks=30, warn_confidence=None
+    )
     assert p_over < 1e-2, f"overconfident posterior gave p={p_over}"

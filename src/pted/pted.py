@@ -19,10 +19,9 @@ def pted(
     y: Union[np.ndarray, "Tensor", "jax.Array"],
     permutations: int = 1000,
     return_all: bool = False,
-    chunk_size: Optional[int] = None,
+    n_landmarks: Optional[int] = None,
     two_tailed: bool = True,
     prog_bar: bool = False,
-    n_columns: Optional[int] = None,
     batch_size: Optional[int] = None,
     rng=None,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
@@ -85,22 +84,18 @@ def pted(
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value.
             bool (default: False)
-        chunk_size (Optional[int]): if not None, estimate the energy distance
+        n_landmarks (Optional[int]): if not None, estimate the energy distance
             from a rectangular distance matrix instead of the full pairwise
-            matrix. Only distances from every sample to ``min(chunk_size,
-            len(x)) + min(chunk_size, len(y))`` "column" points drawn from the
-            pooled sample are computed, so the cost drops from ``O(n^2 d)`` to
-            ``O(n c d)``. If ``chunk_size`` covers both full datasets, this
-            falls back to the exact full-matrix computation. If None, use the
-            full dataset. Mutually exclusive with ``n_columns``.
+            matrix. ``n_landmarks`` points are drawn from the pooled sample as
+            "landmarks", and only the distance from every sample to each
+            landmark is computed, so the cost drops from ``O(n^2 d)`` to
+            ``O(n m d)`` for ``m = n_landmarks``. A value covering the whole
+            pooled sample, or None, runs the exact full-matrix computation.
         two_tailed (bool): if True, compute a two-tailed p-value. This is useful
             if you want to reject the null hypothesis when x and y are either
             too similar or too different. Default is True.
         prog_bar (bool): if True, show a progress bar to track the progress
             of permutation tests. Default is False.
-        n_columns (Optional[int]): the number of column points ``c`` directly.
-            This is the preferred arg; ``chunk_size`` is the older one and
-            simply maps onto it. Mutually exclusive with ``chunk_size``.
         batch_size (Optional[int]): number of permutations evaluated per matrix
             product. Larger values are faster (especially on GPU) at
             ``O(batch_size * n)`` extra memory. None picks a size that keeps a
@@ -114,23 +109,23 @@ def pted(
         time, where n is the pooled sample size and d the dimension. Each
         permutation then costs ``O(n^2)``, though permutations are evaluated in
         batches as a single matrix product rather than one at a time. For large
-        datasets this gets unwieldy, so chunking is recommended: only a
-        rectangular ``(n, c)`` matrix of distances to ``c`` column points is
-        built, in ``O(n c d)`` time, and each permutation costs ``O(n c)``.
+        datasets this gets unwieldy, so landmarks are recommended: only a
+        rectangular ``(n, m)`` matrix of distances to ``m`` landmark points is
+        built, in ``O(n m d)`` time, and each permutation costs ``O(n m)``.
 
-        Chunking keeps the p-value exact. Permutations are drawn from the
-        subgroup that holds the column set fixed, shuffling labels within the
-        columns and within their complement but never between, so the observed
-        labelling is exchangeable with the permuted ones. The test simply
-        becomes less sensitive as ``c`` shrinks: the null spread grows like
-        ``sqrt(n / c)``, so the detectable energy distance scales as
-        ``(n c)^-0.5`` rather than ``n^-1``.
+        Landmarks keep the p-value exact. Permutations are drawn from the
+        subgroup that holds the landmark set fixed, shuffling labels within
+        the landmarks and within their complement but never between, so the
+        observed labelling is exchangeable with the permuted ones. The test
+        simply becomes less sensitive as ``m`` shrinks: the null spread grows
+        like ``sqrt(n / m)``, so the detectable energy distance scales as
+        ``(n m)^-0.5`` rather than ``n^-1``.
 
-        The one thing chunking does cost is p-value resolution, and it bites
+        The one thing landmarks do cost is p-value resolution, and it bites
         hardest when one group holds a single point (the per-simulation test
         inside ``pted_coverage_test``). That lone point sits on whichever side
-        of the column set leaves more room, so the subgroup reaches
-        ``max(c, n - c)`` distinct label assignments and the smallest
+        of the landmark set leaves more room, so the subgroup reaches
+        ``max(m, n - m)`` distinct label assignments and the smallest
         attainable p-value is about the reciprocal of that, however many
         permutations are drawn. A ``PermutationResolutionWarning`` is raised
         when the reachable set is too small to resolve the p-value requested.
@@ -146,14 +141,13 @@ def pted(
     if len(y.shape) > 2:
         y = y.reshape(y.shape[0], -1)
 
-    # The column controls are resolved once, inside the test itself; a count
-    # covering the whole pooled sample lands in the exact full-matrix regime.
+    # A landmark count covering the whole pooled sample lands in the exact
+    # full-matrix regime, so there is no separate branch for it here.
     test, permute = _energy_test(
         x,
         y,
         permutations=permutations,
-        chunk_size=chunk_size,
-        n_columns=n_columns,
+        n_landmarks=n_landmarks,
         prog_bar=prog_bar,
         batch_size=batch_size,
         rng=rng,
@@ -179,13 +173,12 @@ def pted_coverage_test(
     permutations: int = 1000,
     warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
-    chunk_size: Optional[int] = None,
+    n_landmarks: Optional[int] = None,
     sbc_histogram: Optional[str] = None,
     sbc_bins: Optional[int] = None,
     pit_plot: Optional[str] = None,
     pit_confidence: float = 0.95,
     prog_bar: bool = False,
-    n_columns: Optional[int] = None,
     batch_size: Optional[int] = None,
     rng=None,
 ) -> Union[float, tuple[np.ndarray, np.ndarray, float]]:
@@ -242,14 +235,13 @@ def pted_coverage_test(
         return_all (bool): if True, return the test statistic and the permuted
             statistics with the p-value. If False, just return the p-value. bool
             (default: False)
-        chunk_size (Optional[int]): if not None, estimate the energy distance
+        n_landmarks (Optional[int]): if not None, estimate the energy distance
             from a rectangular distance matrix instead of the full pairwise
-            matrix. Only distances from every sample to ``min(chunk_size,
-            len(x)) + min(chunk_size, len(y))`` "column" points drawn from the
-            pooled sample are computed, so the cost drops from ``O(n^2 d)`` to
-            ``O(n c d)``. If ``chunk_size`` covers both full datasets, this
-            falls back to the exact full-matrix computation. If None, use the
-            full dataset. Mutually exclusive with ``n_columns``.
+            matrix. ``n_landmarks`` points are drawn from the pooled sample as
+            "landmarks", and only the distance from every sample to each
+            landmark is computed, so the cost drops from ``O(n^2 d)`` to
+            ``O(n m d)`` for ``m = n_landmarks``. A value covering the whole
+            pooled sample, or None, runs the exact full-matrix computation.
         sbc_histogram (Optional[str]): If given, the path/filename to save a
             Simulation-Based-Calibration histogram.
         sbc_bins (Optional[int]): If given, force the histogram to have the provided
@@ -265,9 +257,6 @@ def pted_coverage_test(
             ``pit_plot`` is not None.
         prog_bar (bool): If True, show a progress bar to track the progress
             of simulations. Default is False.
-        n_columns (Optional[int]): the number of column points ``c`` directly.
-            This is the preferred arg; ``chunk_size`` is the older one and
-            simply maps onto it. Mutually exclusive with ``chunk_size``.
         batch_size (Optional[int]): number of permutations evaluated per matrix
             product. Larger values are faster (especially on GPU) at
             ``O(batch_size * n)`` extra memory. None picks a size that keeps a
@@ -281,24 +270,24 @@ def pted_coverage_test(
         time, where n is the pooled sample size and d the dimension. Each
         permutation then costs ``O(n^2)``, though permutations are evaluated in
         batches as a single matrix product rather than one at a time. For large
-        datasets this gets unwieldy, so chunking is recommended: only a
-        rectangular ``(n, c)`` matrix of distances to ``c`` column points is
-        built, in ``O(n c d)`` time, and each permutation costs ``O(n c)``.
+        datasets this gets unwieldy, so landmarks are recommended: only a
+        rectangular ``(n, m)`` matrix of distances to ``m`` landmark points is
+        built, in ``O(n m d)`` time, and each permutation costs ``O(n m)``.
 
-        Chunking keeps the p-value exact. Permutations are drawn from the
-        subgroup that holds the column set fixed, shuffling labels within the
-        columns and within their complement but never between, so every
+        Landmarks keep the p-value exact. Permutations are drawn from the
+        subgroup that holds the landmark set fixed, shuffling labels within
+        the landmarks and within their complement but never between, so every
         normalising constant in the statistic is a constant and the observed
         labelling is exchangeable with the permuted ones. The test simply
-        becomes less sensitive as ``c`` shrinks: the null spread grows like
-        ``sqrt(n / c)``, so the detectable energy distance scales as
-        ``(n c)^-0.5`` rather than ``n^-1``.
+        becomes less sensitive as ``m`` shrinks: the null spread grows like
+        ``sqrt(n / m)``, so the detectable energy distance scales as
+        ``(n m)^-0.5`` rather than ``n^-1``.
 
-        The one thing chunking does cost is p-value resolution, and it bites
+        The one thing landmarks do cost is p-value resolution, and it bites
         hardest when one group holds a single point (the per-simulation test
         inside ``pted_coverage_test``). That lone point sits on whichever side
-        of the column set leaves more room, so the subgroup reaches
-        ``max(c, n - c)`` distinct label assignments and the smallest
+        of the landmark set leaves more room, so the subgroup reaches
+        ``max(m, n - m)`` distinct label assignments and the smallest
         attainable p-value is about the reciprocal of that, however many
         permutations are drawn. A ``PermutationResolutionWarning`` is raised
         when the reachable set is too small to resolve the p-value requested.
@@ -327,8 +316,7 @@ def pted_coverage_test(
             permutations=permutations,
             return_all=True,
             two_tailed=False,
-            chunk_size=chunk_size,
-            n_columns=n_columns,
+            n_landmarks=n_landmarks,
             batch_size=batch_size,
             rng=rng,
         )

@@ -7,7 +7,7 @@ from scipy.spatial.distance import cdist
 
 from pted.utils import (
     PermutationResolutionWarning,
-    allocate_columns,
+    allocate_landmarks,
     two_tailed_p,
     simulation_based_calibration_histogram,
     pit_plot,
@@ -19,7 +19,6 @@ from pted.utils import (
     _index_like,
     _prepare_statistic,
     _random_permutation,
-    _resolve_n_columns,
     _to_scalar,
 )
 
@@ -154,19 +153,19 @@ def _unbiased_energy(x, y):
     return (n1 * n2 / (n1 + n2)) * (2 * cdist(x, y).mean() - exx - eyy)
 
 
-def _brute_block_means(z, small_indicator, cols, n):
+def _brute_block_means(z, small_indicator, landmarks, n):
     """Energy statistic by explicit block sums over the rectangular matrix."""
-    D = cdist(z, z[cols])
+    D = cdist(z, z[landmarks])
     is_s = small_indicator.astype(bool)
     rows_s, rows_l = np.flatnonzero(is_s), np.flatnonzero(~is_s)
-    ks, kl = np.flatnonzero(is_s[cols]), np.flatnonzero(~is_s[cols])
+    ks, kl = np.flatnonzero(is_s[landmarks]), np.flatnonzero(~is_s[landmarks])
     n_s, n_l = len(rows_s), len(rows_l)
 
     def block(rows, kk, drop_self):
         tot = cnt = 0
         for i in rows:
             for k in kk:
-                if drop_self and cols[k] == i:
+                if drop_self and landmarks[k] == i:
                     continue
                 tot += D[i, k]
                 cnt += 1
@@ -183,58 +182,60 @@ def _brute_block_means(z, small_indicator, cols, n):
 
 
 ALLOCATIONS = [
-    # n1, n2, n_columns, expected regime
+    # n1, n2, n_landmarks, expected regime
     (100, 100, 200, "full"),
     (3, 40, 43, "full"),
     (1, 60, 12, "singleton"),  # c < n/2 -> the lone point stays out of C
     (1, 20, 15, "singleton"),  # c > n/2 -> it moves into C instead
-    (6, 80, 40, "small_group_in_C"),
+    (6, 80, 40, "small_group_in_L"),
     (40, 50, 30, "proportional"),
     (40, 50, 3, "proportional"),
 ]
 
 
 @pytest.mark.parametrize("n1,n2,c,regime", ALLOCATIONS)
-def test_allocate_columns_regimes(n1, n2, c, regime):
+def test_allocate_landmarks_regimes(n1, n2, c, regime):
     """Each size combination lands in the intended regime with a consistent
     set of columns."""
-    alloc = allocate_columns(n1, n2, c, rng=0)
-    cols = alloc["cols"]
+    alloc = allocate_landmarks(n1, n2, c, rng=0)
+    landmarks = alloc["landmarks"]
     n = n1 + n2
 
     assert alloc["regime"] == regime
-    assert cols.shape == (c,)
-    assert len(np.unique(cols)) == c, "columns must be distinct points"
-    assert cols.min() >= 0 and cols.max() < n
-    assert np.all(np.diff(cols) > 0), "columns are returned sorted"
+    assert landmarks.shape == (c,)
+    assert len(np.unique(landmarks)) == c, "columns must be distinct points"
+    assert landmarks.min() >= 0 and landmarks.max() < n
+    assert np.all(np.diff(landmarks) > 0), "columns are returned sorted"
 
-    # c_small must be the number of columns actually belonging to the small group
-    assert np.sum(np.isin(cols, alloc["small_idx"])) == alloc["c_small"]
-    assert alloc["c_small"] + alloc["c_large"] == c
-    assert alloc["c_large"] >= 1, "the large group must keep at least one column"
-    assert alloc["exact_within"] == (alloc["c_small"] == alloc["n_small"] or alloc["n_small"] == 1)
+    # n_small_landmarks must be the number of columns actually belonging to the small group
+    assert np.sum(np.isin(landmarks, alloc["small_idx"])) == alloc["n_small_landmarks"]
+    assert alloc["n_small_landmarks"] + alloc["n_large_landmarks"] == c
+    assert alloc["n_large_landmarks"] >= 1, "the large group must keep at least one column"
+    assert alloc["exact_within"] == (
+        alloc["n_small_landmarks"] == alloc["n_small"] or alloc["n_small"] == 1
+    )
 
 
-def test_allocate_columns_reference_size():
+def test_allocate_landmarks_reference_size():
     """reference_size counts the label assignments the subgroup can reach."""
     for n1, n2, c, _ in ALLOCATIONS:
-        alloc = allocate_columns(n1, n2, c, rng=1)
-        n, n_s, c_s = n1 + n2, alloc["n_small"], alloc["c_small"]
+        alloc = allocate_landmarks(n1, n2, c, rng=1)
+        n, n_s, c_s = n1 + n2, alloc["n_small"], alloc["n_small_landmarks"]
         expected = comb(c, c_s) * comb(n - c, n_s - c_s)
         assert alloc["reference_size"] == min(expected, 10**15)
 
 
-def test_allocate_columns_errors():
-    """allocate_columns is the single gate on sample and column counts."""
-    with pytest.raises(ValueError, match="at least 2 columns"):
-        allocate_columns(10, 10, 1)
+def test_allocate_landmarks_errors():
+    """allocate_landmarks is the single gate on sample and column counts."""
+    with pytest.raises(ValueError, match="at least 2 landmarks"):
+        allocate_landmarks(10, 10, 1)
     with pytest.raises(ValueError, match="exceeds the pooled sample size"):
-        allocate_columns(10, 10, 21)
+        allocate_landmarks(10, 10, 21)
     with pytest.raises(ValueError, match="both samples need at least one point"):
-        allocate_columns(0, 10, 5)
+        allocate_landmarks(0, 10, 5)
     # and it is reached through the public API, not bypassed by the mapping
-    with pytest.raises(ValueError, match="at least 2 columns"):
-        permutation_energy_test(np.zeros((5, 2)), np.zeros((5, 2)), permutations=1, n_columns=1)
+    with pytest.raises(ValueError, match="at least 2 landmarks"):
+        permutation_energy_test(np.zeros((5, 2)), np.zeros((5, 2)), permutations=1, n_landmarks=1)
     with pytest.raises(ValueError, match="both samples need at least one point"):
         permutation_energy_test(np.zeros((0, 2)), np.zeros((5, 2)), permutations=1)
 
@@ -246,18 +247,20 @@ def test_draw_labels_stays_in_subgroup(n1, n2, c, regime):
     fixed. This is what makes the observed labelling exchangeable with the
     permuted ones."""
     rng = np.random.default_rng(3)
-    alloc = allocate_columns(n1, n2, c, rng)
+    alloc = allocate_landmarks(n1, n2, c, rng)
     n = n1 + n2
     base = np.zeros(n)
     base[alloc["small_idx"]] = 1.0
-    in_c = np.zeros(n, bool)
-    in_c[alloc["cols"]] = True
+    in_l = np.zeros(n, bool)
+    in_l[alloc["landmarks"]] = True
 
-    U = _draw_labels(base, np.flatnonzero(in_c), np.flatnonzero(~in_c), 200, rng.spawn(2))
+    U = _draw_labels(base, np.flatnonzero(in_l), np.flatnonzero(~in_l), 200, rng.spawn(2))
 
     assert np.all(np.isin(U, [0.0, 1.0]))
     assert np.all(U.sum(1) == alloc["n_small"]), "small group size is preserved"
-    assert np.all(U[:, alloc["cols"]].sum(1) == alloc["c_small"]), "column counts are preserved"
+    assert np.all(
+        U[:, alloc["landmarks"]].sum(1) == alloc["n_small_landmarks"]
+    ), "column counts are preserved"
     # and the labels really do move around within each part
     if alloc["reference_size"] > 100:
         assert len(np.unique(U, axis=0)) > 1
@@ -272,18 +275,18 @@ def test_statistic_matches_brute_force_block_means(n1, n2, c, regime):
     y = rng.standard_normal((n2, 4)) + 0.4
     z = np.vstack([x, y])
 
-    alloc = allocate_columns(n1, n2, c, rng)
-    D = cdist(z, z[alloc["cols"]])
+    alloc = allocate_landmarks(n1, n2, c, rng)
+    D = cdist(z, z[alloc["landmarks"]])
     prep = _prepare_statistic(D, alloc, "numpy")
 
     U = np.concatenate(
         [
             prep["base_small"][None, :],
-            _draw_labels(prep["base_small"], prep["idx_c"], prep["idx_o"], 5, rng.spawn(2)),
+            _draw_labels(prep["base_small"], prep["idx_l"], prep["idx_o"], 5, rng.spawn(2)),
         ]
     )
     got = _evaluate_statistic(prep, U)
-    expect = [_brute_block_means(z, U[b], alloc["cols"], n1 + n2) for b in range(len(U))]
+    expect = [_brute_block_means(z, U[b], alloc["landmarks"], n1 + n2) for b in range(len(U))]
     assert np.allclose(got, expect, atol=1e-9)
 
 
@@ -308,20 +311,20 @@ def test_statistic_backend_agreement(backend):
     y = rng.standard_normal((n2, 5)) + 0.3
     z = np.vstack([x, y])
 
-    alloc = allocate_columns(n1, n2, c, rng)
+    alloc = allocate_landmarks(n1, n2, c, rng)
     U = None
     results = {}
     for be in ("numpy", backend):
         zb = {"numpy": lambda: z, "torch": lambda: torch.tensor(z), "jax": lambda: jnp.array(z)}[
             be
         ]()
-        D = _cdist(zb, zb[_index_like(alloc["cols"], zb, be)], be)
+        D = _cdist(zb, zb[_index_like(alloc["landmarks"], zb, be)], be)
         prep = _prepare_statistic(D, alloc, be)
         if U is None:
             U = np.concatenate(
                 [
                     prep["base_small"][None, :],
-                    _draw_labels(prep["base_small"], prep["idx_c"], prep["idx_o"], 8, rng.spawn(2)),
+                    _draw_labels(prep["base_small"], prep["idx_l"], prep["idx_o"], 8, rng.spawn(2)),
                 ]
             )
         results[be] = _evaluate_statistic(prep, U)
@@ -333,10 +336,10 @@ def test_draw_labels_independent_of_batch_size():
     """The two label streams are consumed row by row, so splitting a run into
     batches yields bit-identical permutations."""
     base = np.r_[np.ones(5), np.zeros(15)]
-    idx_c, idx_o = np.arange(12), np.arange(12, 20)
-    whole = _draw_labels(base, idx_c, idx_o, 10, np.random.default_rng(9).spawn(2))
+    idx_l, idx_o = np.arange(12), np.arange(12, 20)
+    whole = _draw_labels(base, idx_l, idx_o, 10, np.random.default_rng(9).spawn(2))
     rngs = np.random.default_rng(9).spawn(2)
-    split = np.concatenate([_draw_labels(base, idx_c, idx_o, k, rngs) for k in (3, 3, 4)])
+    split = np.concatenate([_draw_labels(base, idx_l, idx_o, k, rngs) for k in (3, 3, 4)])
     assert np.array_equal(whole, split)
 
 
@@ -344,7 +347,7 @@ def test_statistic_independent_of_batch_size():
     """Batching is purely a memory/throughput knob: with the same seed it draws
     the same permutations, so the statistics agree to within the reordering
     that a different matmul shape costs in floating point."""
-    rng_kwargs = dict(permutations=64, n_columns=30, rng=12345)
+    rng_kwargs = dict(permutations=64, n_landmarks=30, rng=12345)
     x = np.random.default_rng(0).standard_normal((50, 4))
     y = np.random.default_rng(1).standard_normal((70, 4))
     ref_stat, ref_perm = permutation_energy_test(x, y, batch_size=1, **rng_kwargs)
@@ -356,25 +359,14 @@ def test_statistic_independent_of_batch_size():
         ), f"batch_size={batch} changed the null draws"
 
 
-def test_resolve_n_columns():
-    # chunk_size reproduces the number of distance columns it used to request
-    assert _resolve_n_columns(1000, 1000, chunk_size=100) == 200
-    assert _resolve_n_columns(200, 30, chunk_size=50) == 80
-    # covering both datasets falls back to the full matrix
-    assert _resolve_n_columns(20, 30, chunk_size=40) == 50
-    # n_columns is taken literally, capped at the pooled size
-    assert _resolve_n_columns(20, 30, n_columns=17) == 17
-    assert _resolve_n_columns(20, 30, n_columns=500) == 50
-    # neither means the full matrix
-    assert _resolve_n_columns(20, 30) == 50
-
-    with pytest.raises(ValueError, match="not both"):
-        _resolve_n_columns(20, 30, chunk_size=5, n_columns=5)
-    with pytest.raises(ValueError, match="chunk_size must be positive"):
-        _resolve_n_columns(20, 30, chunk_size=0)
-    # a nonsense n_columns passes through here and is rejected by
-    # allocate_columns, which owns every column-count check
-    assert _resolve_n_columns(20, 30, n_columns=1) == 1
+def test_n_landmarks_covering_the_sample_is_the_full_test():
+    """None, or any count at or above the pooled size, is the exact test."""
+    x = np.random.default_rng(0).standard_normal((20, 3))
+    y = np.random.default_rng(1).standard_normal((30, 3))
+    ref = permutation_energy_test(x, y, permutations=32, rng=5)
+    for m in (50, 500):
+        stat, perm = permutation_energy_test(x, y, permutations=32, n_landmarks=m, rng=5)
+        assert stat == ref[0] and np.array_equal(perm, ref[1])
 
 
 def test_singleton_picks_the_larger_side_of_C():
@@ -384,12 +376,12 @@ def test_singleton_picks_the_larger_side_of_C():
     n2 = 200
     n = 1 + n2
     for c in range(2, n):
-        alloc = allocate_columns(1, n2, c, rng=0)
+        alloc = allocate_landmarks(1, n2, c, rng=0)
         assert alloc["regime"] == "singleton"
-        assert alloc["c_small"] == (1 if c > n - c else 0)
+        assert alloc["n_small_landmarks"] == (1 if c > n - c else 0)
         assert alloc["reference_size"] == max(c, n - c)
     # so the reference set never drops below half the pooled sample
-    worst = min(allocate_columns(1, n2, c, rng=0)["reference_size"] for c in range(2, n))
+    worst = min(allocate_landmarks(1, n2, c, rng=0)["reference_size"] for c in range(2, n))
     assert worst >= n // 2
 
 
@@ -400,18 +392,24 @@ def test_permutation_resolution_warning():
     # singleton: only a genuinely tiny pooled sample is short of assignments now
     with pytest.warns(PermutationResolutionWarning, match="single point"):
         permutation_energy_test(
-            rng.standard_normal((1, 3)), rng.standard_normal((10, 3)), permutations=100, n_columns=5
+            rng.standard_normal((1, 3)),
+            rng.standard_normal((10, 3)),
+            permutations=100,
+            n_landmarks=5,
         )
 
-    # small_group_in_C: too FEW columns is the failure mode here
-    with pytest.warns(PermutationResolutionWarning, match="use more columns"):
+    # small_group_in_L: too FEW columns is the failure mode here
+    with pytest.warns(PermutationResolutionWarning, match="use more landmarks"):
         permutation_energy_test(
-            rng.standard_normal((2, 3)), rng.standard_normal((30, 3)), permutations=100, n_columns=5
+            rng.standard_normal((2, 3)),
+            rng.standard_normal((30, 3)),
+            permutations=100,
+            n_landmarks=5,
         )
 
     # sensible column counts are quiet, at either end of the singleton range
     x, y = rng.standard_normal((1, 3)), rng.standard_normal((60, 3))
     with warnings.catch_warnings():
         warnings.simplefilter("error", PermutationResolutionWarning)
-        permutation_energy_test(x, y, permutations=100, n_columns=8)
-        permutation_energy_test(x, y, permutations=100, n_columns=55)
+        permutation_energy_test(x, y, permutations=100, n_landmarks=8)
+        permutation_energy_test(x, y, permutations=100, n_landmarks=55)
