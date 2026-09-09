@@ -104,6 +104,7 @@ __all__ = (
     "confidence_alert",
     "simulation_based_calibration_histogram",
     "pit_plot",
+    "containment_pit_plot",
     "hdp_coverage_test",
 )
 
@@ -162,6 +163,23 @@ def _asarray_like(x, ref, backend: str):
     if backend == "jax":
         return jnp.asarray(x, dtype=ref.dtype)
     return np.asarray(x, dtype=ref.dtype)
+
+
+def _take_along0(a, idx, backend: str):
+    """Gather ``a`` along axis 0 with per-column indices."""
+    if backend == "torch":
+        return torch.take_along_dim(a, idx, dim=0)
+    if backend == "jax":
+        return jnp.take_along_axis(a, idx, axis=0)
+    return np.take_along_axis(a, idx, axis=0)
+
+
+def _log(a, backend: str):
+    if backend == "torch":
+        return torch.log(a)
+    if backend == "jax":
+        return jnp.log(a)
+    return np.log(a)
 
 
 def _index_like(idx, ref, backend: str):
@@ -577,6 +595,7 @@ def _prepare_statistic(D, alloc: dict, backend: str) -> dict:
         "const": const,
         "base_small": base_small,
         "backend": backend,
+        "evaluate": _evaluate_statistic,
     }
 
 
@@ -610,6 +629,103 @@ def _evaluate_statistic(prep: dict, U) -> np.ndarray:
     return _to_numpy(stat, backend).astype(np.float64, copy=False)
 
 
+def _containment_curve(prep: dict, U):
+    """``(B, n_y + 1)`` running count of x points at each step of the p lattice.
+
+    The per-point p-values live on ``{1/(n_y+1), ..., 1}``, so their empirical
+    CDF is fully described by how many x points have accumulated by each lattice
+    step. One row per labelling.
+    """
+    backend, D = prep["backend"], prep["D"]
+    Us = _asarray_like(U, D, backend)
+    Xs = Us if prep["x_is_small"] else 1.0 - Us
+    Vx = Xs if prep["landmarks"] is None else Xs[:, prep["landmarks"]]
+    depth = (D @ (1.0 - Vx).T) / prep["m_y"]
+    order = (-depth).argsort(0)
+    ranked_x = _to_numpy(_take_along0(Xs.T, order, backend), backend)
+    ranked_y = _to_numpy(_take_along0((1.0 - Xs).T, order, backend), backend)
+
+    n_y, rows = int(prep["n_y"]), ranked_x.shape[1]
+    # y points at least as peripheral as each ranked point; this is the count
+    # that turns into p = (1 + count) / (n_y + 1).
+    above = ranked_y.cumsum(0).astype(np.int64)
+    flat = above + np.arange(rows)[None, :] * (n_y + 1)
+    hist = np.bincount(flat.ravel(), weights=ranked_x.ravel(), minlength=rows * (n_y + 1))
+    return hist.reshape(rows, n_y + 1).cumsum(1)
+
+
+def _prepare_containment(D, alloc: dict, backend: str, x_is_small: bool) -> dict:
+    """Precompute for the containment statistic: is x peripheral within y?
+
+    Every pooled point gets a *depth*, its mean distance to the y-labelled
+    points; peripheral points have large depth. Each x point then carries the
+    singleton energy p-value ``p_i = (1 + #{j in y : d_j >= d_i}) / (n_y + 1)``,
+    and those are aggregated the way :func:`pted.pted_coverage_test` aggregates
+    its per-simulation p-values, ``-2 sum log p_i``. Large means x sits further
+    out than y does.
+
+    Unlike the energy distance this is *not* symmetric in x and y, which is the
+    whole point.
+    """
+    n_s, n_l = alloc["n_small"], alloc["n_large"]
+    n = n_s + n_l
+    m_s, m_l = alloc["n_small_landmarks"], alloc["n_large_landmarks"]
+    landmarks = alloc["landmarks"]
+    full = alloc["regime"] == "full"
+    m_y = m_l if x_is_small else m_s
+    n_y = n_l if x_is_small else n_s
+    if m_y < 1:
+        raise ValueError(
+            "the containing sample has no landmarks, so depth is unestimable; "
+            "use more landmarks or the full matrix"
+        )
+
+    # Ranks are invariant to a constant offset, but zeroing the self-pairs
+    # still matters: a y point counting its own zero distance would look
+    # artificially deep.
+    D = D - float(D.mean())
+    D = _zero_self_pairs(D, landmarks, backend)
+
+    base_small = np.zeros(n)
+    base_small[alloc["small_idx"]] = 1.0
+    in_l = np.zeros(n, dtype=bool)
+    in_l[landmarks] = True
+
+    return {
+        "D": D,
+        "ref": D,
+        "parts": ((np.flatnonzero(in_l), m_s), (np.flatnonzero(~in_l), n_s - m_s)),
+        "landmarks": None if full else _index_like(landmarks, D, backend),
+        "x_is_small": x_is_small,
+        "m_y": float(m_y),
+        "n_y": float(n_y),
+        "base_small": base_small,
+        "backend": backend,
+        "evaluate": _evaluate_containment,
+    }
+
+
+def _evaluate_containment(prep: dict, U) -> np.ndarray:
+    """Fisher combination of per-point depth ranks, for a batch of labellings."""
+    backend, D = prep["backend"], prep["D"]
+    Us = _asarray_like(U, D, backend)
+    Xs = Us if prep["x_is_small"] else 1.0 - Us  # (B, n) indicator of the x sample
+    Vx = Xs if prep["landmarks"] is None else Xs[:, prep["landmarks"]]
+
+    # Depth of every pooled point against each labelling's y set.
+    depth = (D @ (1.0 - Vx).T) / prep["m_y"]  # (n, B)
+
+    # Rank by depth, most peripheral first; the running count of y points is
+    # then #{j in y : d_j >= d_i} without ever materialising a comparison.
+    order = (-depth).argsort(0)
+    ranked_x = _take_along0(Xs.T, order, backend)
+    ranked_y = _take_along0((1.0 - Xs).T, order, backend)
+    p = (1.0 + ranked_y.cumsum(0)) / (prep["n_y"] + 1.0)
+
+    stat = -2.0 * (ranked_x * _log(p, backend)).sum(0)
+    return _to_numpy(stat, backend).astype(np.float64, copy=False)
+
+
 # --------------------------------------------------------------- public API
 
 
@@ -621,8 +737,14 @@ def permutation_energy_test(
     prog_bar: bool = False,
     batch_size: Optional[int] = None,
     rng=None,
+    containment: bool = False,
 ) -> tuple[float, np.ndarray]:
-    """Observed energy statistic and its permutation distribution.
+    """Observed statistic and its permutation distribution.
+
+    With ``containment=True`` the statistic is the depth-rank aggregate that
+    asks whether x sticks out of y, rather than the symmetric energy distance
+    that asks whether they differ at all. Everything else -- the landmark
+    allocation, the subgroup, the enumeration -- is identical.
 
     Without ``n_landmarks`` this is the exact full-matrix test: the ``(n, n)``
     distance matrix is built once and the statistic is evaluated for batches of
@@ -688,9 +810,13 @@ def permutation_energy_test(
         "more stable (i.e. z-score norm)."
     )
 
-    prep = _prepare_statistic(dmatrix, alloc, backend)
+    if containment:
+        prep = _prepare_containment(dmatrix, alloc, backend, n1 <= n2)
+    else:
+        prep = _prepare_statistic(dmatrix, alloc, backend)
+    evaluate = prep["evaluate"]
 
-    test_stat = float(_evaluate_statistic(prep, prep["base_small"][None, :])[0])
+    test_stat = float(evaluate(prep, prep["base_small"][None, :])[0])
     assert np.isfinite(test_stat), "Observed statistic is not finite!"
 
     if batch_size is None:
@@ -713,7 +839,7 @@ def permutation_energy_test(
     with tqdm(total=n_null, disable=not prog_bar) as bar:
         for U in blocks:
             size = len(U)
-            permute_stats[done : done + size] = _evaluate_statistic(prep, U)
+            permute_stats[done : done + size] = evaluate(prep, U)
             done += size
             bar.update(size)
     assert done == n_null, f"produced {done} null statistics, expected {n_null}"
@@ -829,7 +955,7 @@ def _band_accept_probability(t, n, lower, upper):
     return float(f.sum())
 
 
-def _lattice_band(n, lattice, confidence, max_points=512):
+def _lattice_band(n, lattice, confidence, max_points=512, one_sided=False):
     """Simultaneous ECDF band built from the known null of the p-values.
 
     The ECDF only moves where the p-values can actually land, so this works
@@ -870,6 +996,9 @@ def _lattice_band(n, lattice, confidence, max_points=512):
         max_points (int): cap on evaluation points. A finer lattice is checked
             on an evenly spaced subset, which stays valid and costs a little
             power.
+        one_sided (bool): constrain only from above, spending the whole error
+            budget on the upper edge. For a composite null where the ECDF is
+            expected to sit low, a lower edge would flag the healthy case.
 
     Returns
     -------
@@ -896,7 +1025,7 @@ def _lattice_band(n, lattice, confidence, max_points=512):
     tail = np.empty_like(cdf)
     tail[:, 0] = 1.0
     tail[:, 1:] = 1.0 - cdf[:, :-1]  # P(N_k >= j)
-    local = np.minimum(cdf, tail)
+    local = tail if one_sided else np.minimum(cdf, tail)
 
     # Raising eta tightens every interval, so the acceptance probability falls
     # monotonically: bisect for the largest eta that still clears the target.
@@ -1019,6 +1148,107 @@ def pit_plot(pvals, saveto, confidence=0.95, lattice=None):
     ax.set_ylim([0, 1])
     ax.set_title("Probability Integral Transform (PIT) Plot")
     ax.legend()
+    fig.savefig(saveto, bbox_inches="tight")
+    plt.close(fig)
+
+
+def containment_pit_plot(
+    x,
+    y,
+    saveto,
+    confidence: float = 0.95,
+    threshold: float = 0.05,
+    n_landmarks: Optional[int] = None,
+    rng=None,
+):
+    """Diagnostic plot for :func:`pted.pted_containment_test`.
+
+    Plots the empirical CDF of the per-point depth p-values -- one step per
+    point of x -- against two reference marks, on a logarithmic p axis because
+    the whole diagnostic lives at the left edge.
+
+    The **upper bound** is the one-sided simultaneous ceiling for ``n1``
+    p-values that really are uniform, the same construction the ordinary PIT
+    plot uses, with the lower edge dropped. Only the upper edge is meaningful
+    here: the null is composite, and a genuinely contained x has *deeper*
+    points than y, so its p-values run large and its curve is expected to sit
+    well below any uniform reference. That is why the diagonal is not drawn.
+
+    The **vertical line** marks ``threshold``: x points to its left are more
+    peripheral than all but that fraction of y.
+
+    Read them together rather than as a decision rule. A curve that climbs
+    above the bound near the floor means x has points where y essentially
+    cannot reach -- the failure the Fisher aggregate in
+    :func:`pted.pted_containment_test` is blind to, since a deeply covered bulk
+    banks enough slack in ``-2 sum log p`` to hide a few escapees. But plenty of
+    curves cross the bound harmlessly: a tight x concentrates its p-values at
+    one value, so its ECDF is a step, and wherever that step lands it will
+    cross a bound drawn for a spread-out sample. Judgement is required, and
+    that is deliberate -- how much of x may sit how far out is a question about
+    your model, not about the arithmetic.
+
+    Parameters
+    ----------
+        x, y: the samples, as passed to
+            :func:`pted.pted_containment_test`. Shape ``(n1, d)``, ``(n2, d)``.
+        saveto (str): file path; the format follows the extension.
+        confidence (float): simultaneous level for the upper bound.
+        threshold (float): where to draw the vertical marker.
+        n_landmarks: as for :func:`pted.pted_containment_test`.
+        rng: seed, ``np.random.Generator``, or None. Only picks the landmarks.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        warn("No containment PIT plot generated! Please install matplotlib.")
+        return
+
+    backend = _backend(x)
+    z = _concatenate((x, y), backend)
+    n1, n2 = len(x), len(y)
+    n = n1 + n2
+    m = n if n_landmarks is None else min(int(n_landmarks), n)
+
+    alloc = allocate_landmarks(n1, n2, m, _as_rng(rng))
+    landmarks = alloc["landmarks"]
+    zc = z if alloc["regime"] == "full" else z[_index_like(landmarks, z, backend)]
+    prep = _prepare_containment(_cdist(z, zc, backend), alloc, backend, n1 <= n2)
+
+    observed = _containment_curve(prep, prep["base_small"][None, :])[0] / n1
+    n_y = int(prep["n_y"])
+
+    # Under H0 the depth p-values are uniform on the (n_y + 1)-point lattice,
+    # so the ordinary lattice band applies -- upper edge only.
+    t, _, upper, _, achieved = _lattice_band(n1, n_y + 1, confidence, one_sided=True)
+    at = np.round(t * (n_y + 1)).astype(int) - 1
+
+    lattice = np.arange(1, n_y + 2) / (n_y + 1)
+    fig, ax = plt.subplots()
+    ax.step(
+        t,
+        upper,
+        where="post",
+        color="#40658f",
+        linestyle="--",
+        linewidth=1.4,
+        label=f"{achieved:.0%} upper bound, uniform p",
+    )
+    ax.axvline(
+        threshold,
+        color="#555555",
+        linestyle=":",
+        linewidth=1.4,
+        label=f"p = {threshold:g}",
+    )
+    ax.step(lattice, observed, where="post", color="#A34F4F", linewidth=2.4, label="x points")
+    ax.set_xscale("log")
+    ax.set_xlim([lattice[0] / 1.6, 1.0])
+    ax.set_ylim([0, 1])
+    ax.set_xlabel("depth p-value of an x point  (log scale)")
+    ax.set_ylabel("fraction of x")
+    ax.set_title("Containment check")
+    ax.legend(loc="upper left")
     fig.savefig(saveto, bbox_inches="tight")
     plt.close(fig)
 

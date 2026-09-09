@@ -602,3 +602,15 @@ def test_enumerated_pvalues_are_exactly_lattice_uniform():
             expected * (1 - expected) / trials
         ), f"P(p<={t}) was {observed:.4f}, lattice value is {expected:.4f}"
         assert observed <= t + 1e-9, "must stay valid"
+
+
+def test_lattice_band_one_sided_lowers_the_ceiling():
+    """Dropping the floor spends the whole error budget upward, so the ceiling
+    comes down -- which is what makes it worth using where only an excursion
+    above is evidence."""
+    _, _, two_sided, _, _ = _lattice_band(100, 201, 0.95)
+    _, lower, one_sided, _, achieved = _lattice_band(100, 201, 0.95, one_sided=True)
+    assert np.all(lower == 0.0), "one-sided means no floor"
+    assert np.all(one_sided <= two_sided)
+    assert np.any(one_sided < two_sided), "and strictly lower somewhere"
+    assert abs((1 - achieved) - 0.05) < 0.01, f"level was {1 - achieved}"

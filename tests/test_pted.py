@@ -429,3 +429,123 @@ def test_coverage_test_with_landmarks(backend):
         g, over, permutations=199, n_landmarks=30, warn_confidence=None
     )
     assert p_over < 1e-2, f"overconfident posterior gave p={p_over}"
+
+
+# ---------------------------------------------------------------------------
+# Containment: does y cover x?
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_containment_direction(backend):
+    """A tighter sample is contained; a broader, shifted or leaky one is not."""
+    _require_backend(backend)
+    rng = np.random.default_rng(0)
+    y = _to_backend(rng.standard_normal((400, 6)), backend)
+
+    def p(x):
+        return pted.pted_containment_test(_to_backend(x, backend), y, rng=1)
+
+    assert p(rng.standard_normal((80, 6)) * 0.5) > 0.1, "a tighter sample is contained"
+    assert p(rng.standard_normal((80, 6)) * 1.7) < 1e-2, "a broader one is not"
+    assert p(rng.standard_normal((80, 6)) + 1.2) < 1e-2, "a shifted one is not"
+
+    leaky = rng.standard_normal((80, 6))
+    leaky[:8] += 5.0
+    assert p(leaky) < 1e-2, "a few escaped points are not contained"
+
+
+def test_containment_is_not_symmetric():
+    """The whole point: asking it the other way round must give a different
+    answer. The energy distance, and the mean depth it reduces to, cannot --
+    both are invariant under swapping the two samples."""
+    rng = np.random.default_rng(3)
+    broad = rng.standard_normal((100, 4)) * 1.7
+    tight = rng.standard_normal((100, 4))
+
+    assert pted.pted_containment_test(broad, tight, rng=2) < 1e-2, "broad is not inside tight"
+    assert pted.pted_containment_test(tight, broad, rng=2) > 0.1, "tight is inside broad"
+
+    # the symmetric energy test cannot separate these
+    assert pted.pted(broad, tight, rng=2) == pted.pted(tight, broad, rng=2)
+
+
+def test_containment_null_is_calibrated():
+    """Under x and y sharing a distribution the p-value is uniform, and a
+    genuinely contained x is conservative rather than merely non-significant.
+    Fixed seed, so this is deterministic rather than flaky."""
+    trials, permutations = 400, 99
+    rng = np.random.default_rng(20260908)
+    null, contained = np.empty(trials), np.empty(trials)
+    for t in range(trials):
+        y = rng.standard_normal((150, 4))
+        null[t] = pted.pted_containment_test(
+            rng.standard_normal((40, 4)), y, permutations=permutations, rng=rng
+        )
+        contained[t] = pted.pted_containment_test(
+            rng.standard_normal((40, 4)) * 0.5, y, permutations=permutations, rng=rng
+        )
+    rate = float(np.mean(null <= 0.05))  # se = 0.011
+    assert abs(rate - 0.05) < 0.04, f"null rejection rate {rate}"
+    assert float(np.mean(contained <= 0.05)) < 0.02, "a contained sample must not reject"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_containment_with_landmarks(backend):
+    """Landmarks work here too, and both samples must keep at least one."""
+    _require_backend(backend)
+    rng = np.random.default_rng(5)
+    y = _to_backend(rng.standard_normal((300, 5)), backend)
+    x_out = _to_backend(rng.standard_normal((60, 5)) * 1.8, backend)
+    x_in = _to_backend(rng.standard_normal((60, 5)) * 0.5, backend)
+    assert pted.pted_containment_test(x_out, y, n_landmarks=90, rng=1) < 1e-2
+    assert pted.pted_containment_test(x_in, y, n_landmarks=90, rng=1) > 0.1
+
+
+def test_containment_returns_all():
+    rng = np.random.default_rng(7)
+    x, y = rng.standard_normal((30, 3)), rng.standard_normal((90, 3))
+    stat, perm, p = pted.pted_containment_test(x, y, permutations=50, return_all=True, rng=0)
+    assert np.isfinite(stat) and len(perm) == 50
+    assert p == (1.0 + np.sum(perm >= stat)) / 51.0
+
+
+def test_containment_pit_plot(tmp_path):
+    """The plot is written, and its curve shows the failure mode the Fisher
+    aggregate is blind to."""
+    from pted.utils import (
+        allocate_landmarks,
+        _cdist,
+        _containment_curve,
+        _lattice_band,
+        _prepare_containment,
+    )
+
+    rng = np.random.default_rng(0)
+    y = rng.standard_normal((600, 5)) * 8.0
+    leaky = rng.standard_normal((200, 5))
+    leaky[:10] += np.r_[40.0, np.zeros(4)]  # 5% of x where y cannot reach
+
+    out = tmp_path / "containment.pdf"
+    p = pted.pted_containment_test(leaky, y, permutations=299, rng=1, pit_plot=str(out))
+    assert out.exists()
+    assert p > 0.05, "the documented blind spot: Fisher does not see the escapees"
+
+    def curve(x):
+        z = np.vstack([x, y])
+        alloc = allocate_landmarks(len(x), len(y), len(z), rng=0)
+        prep = _prepare_containment(_cdist(z, z, "numpy"), alloc, "numpy", True)
+        return _containment_curve(prep, prep["base_small"][None, :])[0] / len(x)
+
+    # ...but they lift the curve off the floor at the smallest p-value, above
+    # the uniform bound, where a contained sample stays pinned at zero.
+    n_y = len(y)
+    t, _, upper, _, _ = _lattice_band(len(leaky), n_y + 1, 0.95, one_sided=True)
+    at = np.round(t * (n_y + 1)).astype(int) - 1
+    leaky_curve, tight_curve = curve(leaky), curve(rng.standard_normal((200, 5)))
+
+    assert leaky_curve[0] > 0.0, "escapees sit at the p-value floor"
+    assert tight_curve[0] == 0.0, "a contained sample has nothing at the floor"
+    near_floor = t <= 0.01
+    assert np.any(leaky_curve[at][near_floor] > upper[near_floor]), "escapees clear the bound"
+    assert not np.any(tight_curve[at][near_floor] > upper[near_floor])

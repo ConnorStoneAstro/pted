@@ -175,69 +175,78 @@ doubling procedure (``2 * min(p_right, p_left)``) to get the p-value meaning
 that if your posterior is underconfident or overconfident, you will get a small
 p-value that can be used to reject the null.
 
-#### If you have posterior densities
+## Example: Containment Test
 
-If you have posterior densities (and you trust them), then chances are the HDP
-region coverage test is a more powerful test. Essentially, instead of using a
-permutation test to determine the p-value for a single simulation, you just
-determine the fraction of posterior samples with higher posterior density than
-the ground truth[^4]. The package has a quick tool to let you do that:
-
-```python
-from pted import hdp_coverage_test
-
-ground_truth = np.random.uniform(100) # Nsim
-posterior_samples = np.random.uniform((200, 100)) # Nsamp, Nsim
-
-p_value = hdp_coverage_test(ground_truth, posterior_samples, two_tailed = True)
-print(f"p-value: {p_value:.3f}") # expect uniform random from 0-1
-```
-
-## Example: Sensitivity comparison with KS-test
-
-There is no single universally optimal two sample test, but a widely used method
-in 1D is called the Kolmogorov-Smirnov (KS)-test. The KS-test operates
-fundamentally differently from PTED and can only really work in 1D. Here I do a
-super basic comparison of the two methods. Draw two samples of 100 Gaussian
-distributed points, thus the null hypothesis is true for these points. Then
-slowly bias one of the samples by changing the standard deviation up to 2 sigma.
-By tracking how the p-value drops we can see which method is more sensitive to
-this kind of mismatched sample. If you run this test a hundred times you will
-find that PTED is more sensitive to this kind of bias than the KS-test. Observe
-that both methods start around p=0.5 in the true null case (scale = 1), since
-they are both exact tests that truly sample U(0,1) under the null.
+`pted` asks "are these the same distribution?". `pted_containment_test` asks the
+weaker, directional question "**does y cover x?**" — a sample drawn from a
+tighter distribution than `y` passes, while one that spreads beyond it, sits off
+to one side, or throws a few points clear of it fails.
 
 ```python
-from pted import pted
+from pted import pted_containment_test
 import numpy as np
-from scipy.stats import kstest
-import matplotlib.pyplot as plt
 
-np.random.seed(0)
+y = np.random.normal(size = (500, 10))
+inside  = np.random.normal(size = (100, 10)) * 0.5
+outside = np.random.normal(size = (100, 10)) * 1.6
 
-scale = np.linspace(1.0, 2.0, 10)
-pted_p = np.zeros((10, 100))
-ks_p = np.zeros((10, 100))
-for i, s in enumerate(scale):
-    for trial in range(100):
-        x = np.random.normal(size=(100, 1))
-        y = np.random.normal(scale=s, size=(100, 1))
-        pted_p[i][trial] = pted(x, y, two_tailed=False)
-        ks_p[i][trial] = kstest(x[:, 0], y[:, 0]).pvalue
-
-plt.plot(scale, np.mean(pted_p, axis=1), linewidth=3, c="b", label="PTED")
-plt.plot(scale, np.mean(ks_p, axis=1), linewidth=3, c="r", label="KS")
-plt.legend()
-plt.ylim(0, None)
-plt.xlim(1, 2.0)
-plt.xlabel("Out of distribution scale [*sigma]")
-plt.ylabel("p-value")
-
-plt.savefig("pted_demo.png", bbox_inches="tight")
-plt.show()
+print(pted_containment_test(inside,  y))  # large: contained
+print(pted_containment_test(outside, y))  # small: not contained
 ```
 
-![pted demo KS comparison](media/pted_ks.png)
+Unlike every other test in the package this one is **not symmetric** — swapping
+the arguments asks the other question and will usually give a different answer.
+That asymmetry is the point, and it is why the energy distance alone cannot
+answer it: the energy distance is just as large when `x` is *tighter* than `y`
+as when it is broader, so a one-tailed energy test rejects 99.8% of the time on
+a perfectly contained sample.
+
+Instead, every `x` point gets a **depth** — its mean distance to the points
+labelled `y` — so peripheral points score high. This is nearly identical to
+`pted_coverage_test`, and we use the same `-2 sum log p` formula to combine the
+p-values for each `x`. However, instead of interpreting the result as a $\chi^2$
+distribution, we use a secondary permutation test to calibrate it. 
+
+The test is exact where `x` and `y` share a distribution and conservative inside
+the null, which is the goal for a containment test. It measures depth rather
+than literal support: a tight cluster of `x` sitting in a low-density pocket
+well inside `y` counts as contained. So use a heavy dose of caution when
+interpreting the results.
+
+### Read the plot as well as the p-value
+
+`-2 sum log p` is a sum whose per-point floor is zero against a null mean of
+two, so a bulk of `x` sitting deep inside `y` banks slack that can hide a
+handful of points `y` cannot reach at all. In testing, 5% of `x` placed five
+sigma outside the prior predictive went undetected, while every other failure
+mode — data broader than `y`, data offset into its tail — was caught cleanly. So
+pass `pit_plot`:
+
+```python
+p = pted_containment_test(data, prior_predictive, pit_plot = "containment.pdf")
+```
+
+The plot shows the empirical CDF of the per-point depth p-values — one step per
+point of `x` — on a logarithmic p axis, because the whole diagnostic lives at
+the left edge. It carries two reference marks and no diagonal.
+
+The **upper bound** is the one-sided simultaneous ceiling for `n1` p-values that
+really are uniform: the same as the ordinary PIT plot, with the lower edge
+dropped. Only the upper edge means anything here. Any part of the CDF below this
+line indicates the `x` values are likely contained at the threshold level (95%
+by default).
+
+The **vertical line** marks threshold p-value (0.05 by default). Parts of the
+CDF to the right of this line are embedded in `y` at the threshold level and so
+likely are contained. Points to its left are peripheral relative to `y` and so
+this may suggest the values are not contained. However, many values of `x` are
+being tested some some leakage to low p-values are expected, which is why the
+uniform-upper-bound line is also plotted.
+
+Read them together rather than as a decision rule. A curve with points to the
+left of the vertical line and above the uniform-upper-bound is a fair indication
+that `x` is not contained in `y`. Though results either way are not definitive,
+as is the nature of null hypothesis testing, and even moreso here.
 
 ## Interpreting the results
 
