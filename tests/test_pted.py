@@ -368,9 +368,9 @@ def test_landmark_pvalues_are_calibrated(n1, n2, n_landmarks, regime):
     permuted ones. It rejected at 29% (proportional) and 84% (singleton) for a
     nominal 5%. Fixed seed, so this is deterministic rather than flaky.
     """
-    from pted.utils import allocate_landmarks
+    from pted.utils import _allocate, _as_rng
 
-    assert allocate_landmarks(n1, n2, n_landmarks, rng=0)["regime"] == regime
+    assert _allocate(n1, n2, n_landmarks, _as_rng(0))["regime"] == regime
 
     trials, permutations = 600, 49
     rng = np.random.default_rng(20240904)
@@ -514,7 +514,8 @@ def test_containment_pit_plot(tmp_path):
     """The plot is written, and its curve shows the failure mode the Fisher
     aggregate is blind to."""
     from pted.utils import (
-        allocate_landmarks,
+        _allocate,
+        _as_rng,
         _cdist,
         _containment_curve,
         _lattice_band,
@@ -533,7 +534,7 @@ def test_containment_pit_plot(tmp_path):
 
     def curve(x):
         z = np.vstack([x, y])
-        alloc = allocate_landmarks(len(x), len(y), len(z), rng=0)
+        alloc = _allocate(len(x), len(y), len(z), _as_rng(0))
         prep = _prepare_containment(_cdist(z, z, "numpy"), alloc, "numpy", True)
         return _containment_curve(prep, prep["base_small"][None, :])[0] / len(x)
 

@@ -362,7 +362,7 @@ def pted_coverage_test(
 * **return_all** *(bool)*: if True, return the test statistic and the permuted statistics with the p-value. If False, just return the p-value. bool (default: False)
 * **n_landmarks** *(Optional[int])*: if not None, estimate the energy distance from a rectangular distance matrix instead of the full pairwise matrix. `n_landmarks` points are drawn from the pooled sample as "landmarks", and only the distance from every sample to each landmark is computed, so the cost drops from `O(n^2 d)` to `O(n m d)` for `m = n_landmarks`. A value covering the whole pooled sample, or None, runs the exact full-matrix computation.
 
-  Because the ground truth is a single point, the per-simulation test runs in the `singleton` regime, where the permutation subgroup reaches `max(m, n - m)` distinct label assignments. Keep `n_landmarks` well below the number of posterior samples.
+  Because the ground truth is a single point, the per-simulation test runs in the `singleton` regime, where the permutation subgroup reaches only `n - m` distinct label assignments. Keep `n_landmarks` well below the number of posterior samples.
 * **sbc_histogram** *(Optional[str])*: If given, the path/filename to save a Simulation-Based-Calibration histogram.
 * **sbc_bins** *(Optional[int])*: If given, force the histogram to have the provided number of bins. Otherwise, select an appropriate size: ~sqrt(N).
 * **pit_plot** *(Optional[str])*: If given, the path/filename to save a Probability Integral Transform (PIT) plot of the per-simulation p-values against the expected uniform distribution, with a shaded KS confidence band.
@@ -442,7 +442,7 @@ the p-value under the `>=` convention: with a group of 151 and 199 draws,
 puts it at 0.0195, leaving only the unavoidable granularity of a 151-point
 lattice — and it costs *less* compute, since 151 evaluations beat 199. This
 mostly matters for `pted_coverage_test`, where the ground truth is a single
-point and the group is only `max(m, n - m)` large.
+point and the group is only `n - m` large.
 
 One consequence: when this kicks in, `return_all` gives back
 `reference_size - 1` permuted statistics rather than `permutations` of them.
@@ -468,14 +468,18 @@ The detection threshold degrades as one over the square root of the compute.
 
 You also give up some p-value resolution, and this is most significant when one
 group holds a single point — which is exactly the per-simulation test inside
-`pted_coverage_test`. There the lone point can sit inside `L`, its label roaming
-over the `m` landmark positions, or outside it, roaming over the other `n - m`,
-so the subgroup reaches `max(m, n - m)` distinct label assignments. PTED puts the
-point on whichever side is larger, which holds the reference set at half the
-pooled sample or better. The smallest attainable p-value is still about the
-reciprocal of that, however many permutations you draw, so PTED raises a
-`PermutationResolutionWarning` when the reachable set is too small to resolve
-the p-value you asked for.
+`pted_coverage_test`. The lone point is kept out of `L` — it has no within-group
+pairs, so landmarking it would buy nothing — and its label then roams over the
+`n - m` positions outside, which is the whole reachable set. The smallest
+attainable p-value is about `1 / (n - m)` however many permutations you draw, so
+PTED raises a `PermutationResolutionWarning` when that set is too small to
+resolve the p-value you asked for.
+
+This is the sharpest case of a general rule: **landmarks are for `m << n`.** At
+`m = n / 2` the rectangular matrix saves only a factor of two over the exact
+test, which does not pay for the sensitivity and resolution it costs. Reach for
+them when the full matrix will not fit or will not finish, not to shave a
+constant factor.
 
 ### Does restricting the permutations still measure the energy distance?
 

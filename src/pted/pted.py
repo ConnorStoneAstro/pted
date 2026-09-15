@@ -93,8 +93,9 @@ def pted(
             matrix. ``n_landmarks`` points are drawn from the pooled sample as
             "landmarks", and only the distance from every sample to each
             landmark is computed, so the cost drops from ``O(n^2 d)`` to
-            ``O(n m d)`` for ``m = n_landmarks``. A value covering the whole
-            pooled sample, or None, runs the exact full-matrix computation.
+            ``O(n m d)`` for ``m = n_landmarks``. Worth it only for
+            ``m << n``. A value covering the whole pooled sample, or None,
+            runs the exact full-matrix computation.
         two_tailed (bool): if True, compute a two-tailed p-value. This is useful
             if you want to reject the null hypothesis when x and y are either
             too similar or too different. Default is True.
@@ -127,11 +128,12 @@ def pted(
 
         The one thing landmarks do cost is p-value resolution, and it bites
         hardest when one group holds a single point (the per-simulation test
-        inside ``pted_coverage_test``). That lone point sits on whichever side
-        of the landmark set leaves more room, so the subgroup reaches
-        ``max(m, n - m)`` distinct label assignments and the smallest
-        attainable p-value is about the reciprocal of that, however many
-        permutations are drawn. A ``PermutationResolutionWarning`` is raised
+        inside ``pted_coverage_test``). That lone point is kept out of the
+        landmark set, so the subgroup reaches only ``n - m`` distinct label
+        assignments and the smallest attainable p-value is about ``1 / (n - m)``
+        however many permutations are drawn. Landmarks are for ``m << n``: at
+        ``m = n / 2`` the rectangular matrix saves a factor of two over the
+        exact test, which does not pay for the lost sensitivity. A ``PermutationResolutionWarning`` is raised
         when the reachable set is too small to resolve the p-value requested.
         When the permutation subgroup has no more than ``permutations``
         members, PTED walks the whole group instead of sampling it. That is
@@ -400,8 +402,9 @@ def pted_coverage_test(
             matrix. ``n_landmarks`` points are drawn from the pooled sample as
             "landmarks", and only the distance from every sample to each
             landmark is computed, so the cost drops from ``O(n^2 d)`` to
-            ``O(n m d)`` for ``m = n_landmarks``. A value covering the whole
-            pooled sample, or None, runs the exact full-matrix computation.
+            ``O(n m d)`` for ``m = n_landmarks``. Worth it only for
+            ``m << n``. A value covering the whole pooled sample, or None,
+            runs the exact full-matrix computation.
         sbc_histogram (Optional[str]): If given, the path/filename to save a
             Simulation-Based-Calibration histogram.
         sbc_bins (Optional[int]): If given, force the histogram to have the provided
@@ -445,11 +448,12 @@ def pted_coverage_test(
 
         The one thing landmarks do cost is p-value resolution, and it bites
         hardest when one group holds a single point (the per-simulation test
-        inside ``pted_coverage_test``). That lone point sits on whichever side
-        of the landmark set leaves more room, so the subgroup reaches
-        ``max(m, n - m)`` distinct label assignments and the smallest
-        attainable p-value is about the reciprocal of that, however many
-        permutations are drawn. A ``PermutationResolutionWarning`` is raised
+        inside ``pted_coverage_test``). That lone point is kept out of the
+        landmark set, so the subgroup reaches only ``n - m`` distinct label
+        assignments and the smallest attainable p-value is about ``1 / (n - m)``
+        however many permutations are drawn. Landmarks are for ``m << n``: at
+        ``m = n / 2`` the rectangular matrix saves a factor of two over the
+        exact test, which does not pay for the lost sensitivity. A ``PermutationResolutionWarning`` is raised
         when the reachable set is too small to resolve the p-value requested.
         When the permutation subgroup has no more than ``permutations``
         members, PTED walks the whole group instead of sampling it. That is

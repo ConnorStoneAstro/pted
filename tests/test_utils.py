@@ -8,13 +8,14 @@ from scipy.spatial.distance import cdist
 from scipy.stats import kstwo
 
 from pted.utils import (
+    _as_rng,
     _band_accept_probability,
     _lattice_band,
     _sampled_label_blocks,
     _lattice_counts,
     _enumerate_label_blocks,
     PermutationResolutionWarning,
-    allocate_landmarks,
+    _allocate,
     two_tailed_p,
     simulation_based_calibration_histogram,
     pit_plot,
@@ -22,10 +23,16 @@ from pted.utils import (
     permutation_energy_test,
     _cdist,
     _label_drawer,
-    _evaluate_statistic,
     _index_like,
+    _landmark_columns,
     _prepare_statistic,
 )
+
+
+def _evaluate_statistic(prep, U):
+    """The statistic for a batch of labellings, through this prep's evaluator."""
+    return prep["evaluate"](prep, U)
+
 
 try:
     import torch
@@ -152,19 +159,21 @@ ALLOCATIONS = [
     # n1, n2, n_landmarks, expected regime
     (100, 100, 200, "full"),
     (3, 40, 43, "full"),
-    (1, 60, 12, "singleton"),  # c < n/2 -> the lone point stays out of C
-    (1, 20, 15, "singleton"),  # c > n/2 -> it moves into C instead
+    (1, 60, 12, "singleton"),
+    (1, 200, 20, "singleton"),
     (6, 80, 40, "small_group_in_L"),
     (40, 50, 30, "proportional"),
     (40, 50, 3, "proportional"),
 ]
 
+LANDMARK_ALLOCATIONS = [a for a in ALLOCATIONS if a[3] != "full"]
 
-@pytest.mark.parametrize("n1,n2,c,regime", ALLOCATIONS)
+
+@pytest.mark.parametrize("n1,n2,c,regime", LANDMARK_ALLOCATIONS)
 def test_allocate_landmarks_regimes(n1, n2, c, regime):
     """Each size combination lands in the intended regime with a consistent
     set of columns."""
-    alloc = allocate_landmarks(n1, n2, c, rng=0)
+    alloc = _allocate(n1, n2, c, _as_rng(0))
     landmarks = alloc["landmarks"]
     n = n1 + n2
 
@@ -178,45 +187,56 @@ def test_allocate_landmarks_regimes(n1, n2, c, regime):
     assert np.sum(np.isin(landmarks, alloc["small_idx"])) == alloc["n_small_landmarks"]
     assert alloc["n_small_landmarks"] + alloc["n_large_landmarks"] == c
     assert alloc["n_large_landmarks"] >= 1, "the large group must keep at least one column"
-    assert alloc["exact_within"] == (
-        alloc["n_small_landmarks"] == alloc["n_small"] or alloc["n_small"] == 1
-    )
+
+
+@pytest.mark.parametrize("n1,n2,c,regime", [a for a in ALLOCATIONS if a[3] == "full"])
+def test_full_allocation_carries_no_landmark_fields(n1, n2, c, regime):
+    """The full regime has no landmark set, so it does not describe one: the
+    statistic, the subgroup and the distance matrix are all built without."""
+    alloc = _allocate(n1, n2, c, _as_rng(0))
+    assert alloc["regime"] == "full"
+    assert not [k for k in alloc if "landmark" in k]
+    exact = comb(n1 + n2, min(n1, n2))
+    assert alloc["reference_size"] in (exact, float("inf"))
+
+    z = np.random.default_rng(0).standard_normal((n1 + n2, 3))
+    assert _landmark_columns(z, alloc, "numpy") is z, "no column gather"
 
 
 def test_allocate_landmarks_reference_size():
     """reference_size counts the label assignments the subgroup can reach."""
-    for n1, n2, c, _ in ALLOCATIONS:
-        alloc = allocate_landmarks(n1, n2, c, rng=1)
-        n, n_s, c_s = n1 + n2, alloc["n_small"], alloc["n_small_landmarks"]
-        expected = comb(c, c_s) * comb(n - c, n_s - c_s)
-        assert alloc["reference_size"] == min(expected, 10**15)
+    for n1, n2, m, _ in LANDMARK_ALLOCATIONS:
+        alloc = _allocate(n1, n2, m, _as_rng(1))
+        n = n1 + n2
+        n_small, n_small_landmarks = alloc["n_small"], alloc["n_small_landmarks"]
+        expected = comb(m, n_small_landmarks) * comb(n - m, n_small - n_small_landmarks)
+        got = alloc["reference_size"]
+        # counted exactly while it is small enough to matter, inf beyond that
+        assert got == expected or (got == float("inf") and expected > 10**15)
 
 
-def test_allocate_landmarks_errors():
-    """allocate_landmarks is the single gate on sample and column counts."""
+def test_sample_and_landmark_counts_are_validated():
+    """The allocators assume valid input; permutation_energy_test is the gate."""
+    x = np.zeros((5, 2))
     with pytest.raises(ValueError, match="at least 2 landmarks"):
-        allocate_landmarks(10, 10, 1)
-    with pytest.raises(ValueError, match="exceeds the pooled sample size"):
-        allocate_landmarks(10, 10, 21)
+        permutation_energy_test(x, x, permutations=1, n_landmarks=1)
     with pytest.raises(ValueError, match="both samples need at least one point"):
-        allocate_landmarks(0, 10, 5)
-    # and it is reached through the public API, not bypassed by the mapping
-    with pytest.raises(ValueError, match="at least 2 landmarks"):
-        permutation_energy_test(np.zeros((5, 2)), np.zeros((5, 2)), permutations=1, n_landmarks=1)
-    with pytest.raises(ValueError, match="both samples need at least one point"):
-        permutation_energy_test(np.zeros((0, 2)), np.zeros((5, 2)), permutations=1)
+        permutation_energy_test(np.zeros((0, 2)), x, permutations=1)
+    # more landmarks than points is the full matrix, not an error
+    stat, perm = permutation_energy_test(x, x, permutations=4, n_landmarks=10_000, rng=0)
+    assert np.isfinite(stat)
 
 
 def _prep_for(n1, n2, c, seed=3, backend="numpy"):
     """An allocation plus its prepared statistic, on the given backend."""
     rng = np.random.default_rng(seed)
-    alloc = allocate_landmarks(n1, n2, c, rng)
+    alloc = _allocate(n1, n2, c, rng)
     z = rng.standard_normal((n1 + n2, 4))
     if backend == "torch":
         z = torch.tensor(z)
     elif backend == "jax":
         z = jnp.array(z)
-    zc = z if alloc["regime"] == "full" else z[_index_like(alloc["landmarks"], z, backend)]
+    zc = _landmark_columns(z, alloc, backend)
     return alloc, _prepare_statistic(_cdist(z, zc, backend), alloc, backend)
 
 
@@ -231,9 +251,10 @@ def test_draw_labels_stays_in_subgroup(n1, n2, c, regime):
 
     assert np.all(np.isin(U, [0.0, 1.0]))
     assert np.all(U.sum(1) == alloc["n_small"]), "small group size is preserved"
-    assert np.all(
-        U[:, alloc["landmarks"]].sum(1) == alloc["n_small_landmarks"]
-    ), "column counts are preserved"
+    if alloc["regime"] != "full":
+        assert np.all(
+            U[:, alloc["landmarks"]].sum(1) == alloc["n_small_landmarks"]
+        ), "column counts are preserved"
     # and the labels really do move around within each part
     if alloc["reference_size"] > 100:
         assert len(np.unique(U, axis=0)) > 1
@@ -248,9 +269,10 @@ def test_statistic_matches_brute_force_block_means(n1, n2, c, regime):
     y = rng.standard_normal((n2, 4)) + 0.4
     z = np.vstack([x, y])
 
-    alloc = allocate_landmarks(n1, n2, c, rng)
-    D = cdist(z, z[alloc["landmarks"]])
-    prep = _prepare_statistic(D, alloc, "numpy")
+    alloc = _allocate(n1, n2, c, rng)
+    # the full regime keeps no landmark index; its columns are every point
+    columns = np.arange(n1 + n2) if regime == "full" else alloc["landmarks"]
+    prep = _prepare_statistic(cdist(z, z[columns]), alloc, "numpy")
 
     U = np.concatenate(
         [
@@ -259,7 +281,7 @@ def test_statistic_matches_brute_force_block_means(n1, n2, c, regime):
         ]
     )
     got = _evaluate_statistic(prep, U)
-    expect = [_brute_block_means(z, U[b], alloc["landmarks"], n1 + n2) for b in range(len(U))]
+    expect = [_brute_block_means(z, U[b], columns, n1 + n2) for b in range(len(U))]
     assert np.allclose(got, expect, atol=1e-9)
 
 
@@ -284,7 +306,7 @@ def test_statistic_backend_agreement(backend):
     y = rng.standard_normal((n2, 5)) + 0.3
     z = np.vstack([x, y])
 
-    alloc = allocate_landmarks(n1, n2, c, rng)
+    alloc = _allocate(n1, n2, c, rng)
     U = None
     results = {}
     for be in ("numpy", backend):
@@ -381,20 +403,29 @@ def test_n_landmarks_covering_the_sample_is_the_full_test():
         assert stat == ref[0] and np.array_equal(perm, ref[1])
 
 
-def test_singleton_picks_the_larger_side_of_C():
-    """A lone point sits inside or outside C, whichever leaves more label
-    assignments reachable. Without this the reference set collapses to 1 as c
-    approaches n, and the test can only ever return p = 1."""
+def test_singleton_keeps_its_point_out_of_the_landmarks():
+    """A lone point has no within-group pairs, so leaving it out of L costs
+    nothing and its label roams over the n - m positions outside. The reference
+    set therefore shrinks as m grows -- which is why landmarks are for m << n,
+    and why the resolution warning exists."""
     n2 = 200
     n = 1 + n2
-    for c in range(2, n):
-        alloc = allocate_landmarks(1, n2, c, rng=0)
+    for m in range(2, n):
+        alloc = _allocate(1, n2, m, _as_rng(0))
         assert alloc["regime"] == "singleton"
-        assert alloc["n_small_landmarks"] == (1 if c > n - c else 0)
-        assert alloc["reference_size"] == max(c, n - c)
-    # so the reference set never drops below half the pooled sample
-    worst = min(allocate_landmarks(1, n2, c, rng=0)["reference_size"] for c in range(2, n))
-    assert worst >= n // 2
+        assert alloc["n_small_landmarks"] == 0
+        assert alloc["reference_size"] == n - m
+        assert 0 not in alloc["landmarks"], "the lone point is never a landmark"
+
+
+def test_reference_size_is_inf_when_astronomical():
+    """Only smallness matters, so the count is not carried past what anyone
+    would read."""
+    from pted.utils import _reference_size
+
+    assert _reference_size(20, 20, 10, 10) == comb(20, 10)
+    assert _reference_size(201, 20, 1, 0) == 181
+    assert _reference_size(2000, 1000, 500, 250) == float("inf")
 
 
 def test_permutation_resolution_warning():
@@ -419,12 +450,24 @@ def test_permutation_resolution_warning():
             n_landmarks=5,
         )
 
-    # sensible column counts are quiet, at either end of the singleton range
-    x, y = rng.standard_normal((1, 3)), rng.standard_normal((60, 3))
+    # a singleton with too many landmarks now warns rather than flipping sides
+    with pytest.warns(PermutationResolutionWarning, match="use fewer landmarks"):
+        permutation_energy_test(
+            rng.standard_normal((1, 3)),
+            rng.standard_normal((60, 3)),
+            permutations=100,
+            n_landmarks=55,
+        )
+
+    # a sensible landmark count is quiet
     with warnings.catch_warnings():
         warnings.simplefilter("error", PermutationResolutionWarning)
-        permutation_energy_test(x, y, permutations=100, n_landmarks=8)
-        permutation_energy_test(x, y, permutations=100, n_landmarks=55)
+        permutation_energy_test(
+            rng.standard_normal((1, 3)),
+            rng.standard_normal((60, 3)),
+            permutations=100,
+            n_landmarks=8,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +592,7 @@ def test_small_groups_are_enumerated_not_sampled():
     whole group instead, returning reference_size - 1 null statistics."""
     x = np.random.default_rng(0).standard_normal((1, 3))
     y = np.random.default_rng(1).standard_normal((60, 3))
-    reference = allocate_landmarks(1, 60, 61, rng=0)["reference_size"]
+    reference = _allocate(1, 60, 61, _as_rng(0))["reference_size"]
     assert reference == 61
 
     _, permute = permutation_energy_test(x, y, permutations=1000, rng=0)
@@ -563,7 +606,7 @@ def test_small_groups_are_enumerated_not_sampled():
 def test_enumeration_covers_the_group_exactly_once():
     """Every assignment the subgroup reaches appears once, bar the observed."""
     n1, n2, m = 1, 12, 5
-    alloc = allocate_landmarks(n1, n2, m, rng=0)
+    alloc = _allocate(n1, n2, m, _as_rng(0))
     z = np.random.default_rng(0).standard_normal((n1 + n2, 2))
     prep = _prepare_statistic(cdist(z, z[alloc["landmarks"]]), alloc, "numpy")
 

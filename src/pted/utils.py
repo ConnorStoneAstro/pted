@@ -24,29 +24,26 @@ point everything is measured against", never "a point picked for importance".
 
 Landmark allocation
 -------------------
-Dispatched on ``n_s = min(n1, n2)``, the smaller group:
+Dispatched on ``n_small = min(n1, n2)``:
 
 ``full``
     ``m >= n``. Every point is a landmark, ``S_L x S_{L^c}`` is the full
     symmetric group, and the statistic is the exact energy distance.
 
 ``singleton``
-    ``n_s == 1``. Its within-group mean is identically zero (a single point
-    has no within-group pairs), so nothing is unestimable and the lone point
-    may sit on either side of ``L``. It goes on whichever side is larger:
-    outside, its label roams over ``L^c`` for ``n - m`` assignments; inside,
-    over the landmarks for ``m``. The reference set is therefore never smaller
-    than ``ceil(n / 2)``.
+    ``n_small == 1``. Its within-group mean is identically zero (a single point
+    has no within-group pairs), so keeping it out of ``L`` costs nothing and
+    lets its label roam over ``L^c``: ``n - m`` distinct assignments.
 
 ``small_group_in_L``
-    ``n_s <= m // 2``. ``L`` holds ALL of the small group plus ``m - n_s`` from
-    the large group. Every permuted small group is then a subset of ``L``, so
-    every within-small-group distance appears in ``D`` and that term is
-    computed exactly rather than subsampled.
+    ``n_small <= m // 2``. ``L`` holds ALL of the small group plus
+    ``m - n_small`` from the large group. Every permuted small group is then a
+    subset of ``L``, so every within-small-group distance appears in ``D`` and
+    that term is computed exactly rather than subsampled.
 
 ``proportional``
-    Otherwise. ``m_s ~ m * n_s / n``, and both within-group terms are
-    subsampled.
+    Otherwise. ``n_small_landmarks ~ m * n_small / n``, and both within-group
+    terms are subsampled.
 
 Cost
 ----
@@ -55,10 +52,11 @@ scales as ``(n * m)^{-1/2}`` versus ``n^{-1}`` for the full test: the detection
 threshold degrades as one over the square root of the compute. See Janson
 (1984) on incomplete U-statistics.
 
-In the ``singleton`` regime a single row is nearly sufficient for the
-statistic, so keep ``m`` small -- roughly 5-15% of ``n``. Landmarks there come
-straight out of p-value resolution until ``m`` passes ``n / 2``, beyond which
-you may as well pay for the full matrix.
+Landmarks come straight out of p-value resolution in the ``singleton`` regime,
+where the reference set is ``n - m``. Keep ``m`` well under ``n / 2`` in any
+case: at ``m = n / 2`` the rectangular matrix saves only a factor of two over
+the exact test, which is not worth the lost sensitivity. Landmarks are for
+``m << n``.
 
 Block means exclude the zero self-pairs, making the statistic unbiased for the
 population energy distance. It can therefore be negative under H0, like
@@ -98,7 +96,6 @@ __all__ = (
     "is_torch_tensor",
     "is_jax_array",
     "permutation_energy_test",
-    "allocate_landmarks",
     "PermutationResolutionWarning",
     "two_tailed_p",
     "confidence_alert",
@@ -243,96 +240,120 @@ class PermutationResolutionWarning(UserWarning):
     """The permutation group is too small to resolve the requested p-value."""
 
 
-# comb(n, k) is astronomically large for balanced samples; we only ever need to
-# know whether the reference set is small, so cap it.
-_REFERENCE_CAP = 10**15
-
 # Target element count for a batch of permutations, bounding peak memory.
 _BATCH_ELEMENTS = 2**30
 
 
-def _capped_comb(n: int, k: int) -> int:
-    if k > 50 and n - k > 50:
-        return _REFERENCE_CAP
-    return min(comb(n, k), _REFERENCE_CAP)
+def _reference_size(n: int, n_landmarks: int, n_small: int, n_small_landmarks: int):
+    """How many distinct labellings the subgroup ``S_L x S_{L^c}`` reaches.
+
+    It places ``n_small_landmarks`` of the small-group labels among the
+    landmarks and the rest among the ``n - n_landmarks`` other positions,
+    independently, so the count is the product of two binomials.
+
+    Only smallness matters -- the number is either a handful, in which case the
+    p-value resolution is limited and the caller needs to know, or it is
+    astronomical. Returns ``inf`` for the latter rather than spending the
+    arithmetic on an integer nobody reads.
+    """
+    total = 1
+    for size, small in (
+        (n_landmarks, n_small_landmarks),
+        (n - n_landmarks, n_small - n_small_landmarks),
+    ):
+        if min(small, size - small) > 50:
+            return float("inf")
+        total *= comb(size, small)
+    return total
 
 
 # --------------------------------------------------------------- allocation
 
 
-def allocate_landmarks(n1: int, n2: int, n_landmarks: int, rng=None) -> dict:
+def _allocate(n1: int, n2: int, n_landmarks: int, rng) -> dict:
+    """Pick the allocation for this landmark count.
+
+    The two branches describe genuinely different things -- a landmark set and
+    its subgroup, or no landmark set at all -- so they return different keys.
+    ``regime`` says which, and is what everything downstream dispatches on.
+    """
+    if n_landmarks >= n1 + n2:
+        return _allocate_full(n1, n2)
+    return _allocate_landmarks(n1, n2, n_landmarks, rng)
+
+
+def _allocate_full(n1: int, n2: int) -> dict:
+    """Every point is a landmark: the classical exact permutation test.
+
+    There is no landmark set to hold fixed, so ``S_L x S_{L^c}`` is the whole
+    symmetric group and the subgroup restriction is vacuous. The distance
+    matrix is square and symmetric, which the statistic exploits. Nothing
+    downstream needs a landmark index, a landmark count or a column gather, so
+    this allocation does not carry any.
+    """
+    n = n1 + n2
+    n_small = min(n1, n2)
+    return {
+        "regime": "full",
+        "small_idx": np.arange(n1) if n1 <= n2 else n1 + np.arange(n2),
+        "n_small": n_small,
+        "n_large": max(n1, n2),
+        # every position is free, so the group reaches every way of choosing
+        # which n_small of the n labels belong to the small group
+        "reference_size": _reference_size(n, n, n_small, n_small),
+    }
+
+
+def _allocate_landmarks(n1: int, n2: int, n_landmarks: int, rng) -> dict:
     """Choose which pooled-sample points serve as landmarks.
 
-    The landmarks are the ``m`` points every sample is measured against: they
-    supply the columns of the rectangular distance matrix ``D``.
-
-    Group 0 is x (pooled indices ``0..n1-1``), group 1 is y (``n1..n-1``).
+    The landmarks are the ``n_landmarks`` points every sample is measured
+    against: they supply the columns of the rectangular distance matrix ``D``.
     Selection uses only group sizes and positions, never the data values, which
     together with the restricted permutation group is what keeps the test exact.
 
-    Parameters
-    ----------
-        n1 (int): number of samples in x.
-        n2 (int): number of samples in y.
-        n_landmarks (int): number of landmarks ``m``. ``m >= n1 + n2``
-            requests the exact full-matrix test.
-        rng: seed, ``np.random.Generator``, or None (draw from the global state).
+    Assumes ``2 <= n_landmarks < n1 + n2`` and that both samples are non-empty;
+    :func:`permutation_energy_test` checks that before calling.
 
-    Returns
-    -------
-        dict with keys ``landmarks``, ``regime``, ``small_idx`` (pooled indices
-        of the smaller group), ``n_small``, ``n_large``, ``n_small_landmarks``,
-        ``n_large_landmarks``, ``n_landmarks``, ``reference_size``
-        (distinct label assignments the subgroup reaches)
-        and ``exact_within`` (whether the small group's within-group term is
-        computed exactly rather than subsampled).
+    Dispatched on the smaller group:
+
+    ``singleton``
+        ``n_small == 1``. A lone point has no within-group pairs, so keeping it
+        out of ``L`` costs nothing and lets its label roam over the
+        ``n - n_landmarks`` positions outside.
+
+    ``small_group_in_L``
+        ``n_small <= n_landmarks // 2``. ``L`` holds ALL of the small group, so
+        every permuted small group is still a subset of ``L`` and its
+        within-group distances are all present -- that term is exact rather
+        than subsampled.
+
+    ``proportional``
+        Otherwise. The landmarks are split between the groups in proportion to
+        their sizes, and both within-group terms are subsampled.
     """
-    rng = _as_rng(rng)
     n = n1 + n2
-    n_landmarks = int(n_landmarks)
-    if min(n1, n2) < 1:
-        raise ValueError(f"both samples need at least one point, got n1={n1}, n2={n2}")
-    if n_landmarks < 2:
-        raise ValueError(f"need at least 2 landmarks, got n_landmarks={n_landmarks}")
-    if n_landmarks > n:
-        raise ValueError(f"n_landmarks={n_landmarks} exceeds the pooled sample size {n}")
-
     n_small, n_large = min(n1, n2), max(n1, n2)
     x_is_small = n1 <= n2
     small_idx = np.arange(n1) if x_is_small else n1 + np.arange(n2)
     large_idx = n1 + np.arange(n2) if x_is_small else np.arange(n1)
 
-    if n_landmarks == n:
-        # L is everything, so S_L x S_{L^c} is the full symmetric group and
-        # this is the classical exact permutation test.
-        landmarks = np.arange(n)
-        regime, n_small_landmarks = "full", n_small
-    elif n_small == 1:
-        # A lone point has no within-group pairs, so it is free to sit on
-        # either side of L. Inside, its label roams over the m landmark
-        # positions; outside, over the n - m others. Take whichever side is
-        # larger, which holds the reference set at ceil(n / 2) or more instead
-        # of letting it collapse to 1 as m approaches n.
-        regime = "singleton"
-        if n_landmarks > n - n_landmarks:
-            landmarks = np.concatenate(
-                [small_idx, rng.choice(large_idx, size=n_landmarks - 1, replace=False)]
-            )
-            n_small_landmarks = 1
-        else:
-            landmarks = rng.choice(large_idx, size=n_landmarks, replace=False)
-            n_small_landmarks = 0
+    if n_small == 1:
+        landmarks = rng.choice(large_idx, size=n_landmarks, replace=False)
+        regime, n_small_landmarks = "singleton", 0
     elif n_small <= n_landmarks // 2:
-        # Put the whole small group in L so that every permuted small group is
-        # still a subset of L and its within-group distances are all present.
         landmarks = np.concatenate(
             [small_idx, rng.choice(large_idx, size=n_landmarks - n_small, replace=False)]
         )
         regime, n_small_landmarks = "small_group_in_L", n_small
     else:
-        lo = max(1, n_landmarks - n_large)
-        hi = min(n_small, n_landmarks - 1)
-        n_small_landmarks = int(np.clip(round(n_landmarks * n_small / n), lo, hi))
+        n_small_landmarks = int(
+            np.clip(
+                round(n_landmarks * n_small / n),
+                max(1, n_landmarks - n_large),
+                min(n_small, n_landmarks - 1),
+            )
+        )
         landmarks = np.concatenate(
             [
                 rng.choice(small_idx, size=n_small_landmarks, replace=False),
@@ -340,14 +361,6 @@ def allocate_landmarks(n1: int, n2: int, n_landmarks: int, rng=None) -> dict:
             ]
         )
         regime = "proportional"
-
-    # The subgroup places n_small_landmarks of the small labels among the m
-    # landmarks and the rest among the n - m other positions, independently.
-    reference = min(
-        _capped_comb(n_landmarks, n_small_landmarks)
-        * _capped_comb(n - n_landmarks, n_small - n_small_landmarks),
-        _REFERENCE_CAP,
-    )
 
     return {
         "landmarks": np.sort(landmarks),
@@ -358,9 +371,18 @@ def allocate_landmarks(n1: int, n2: int, n_landmarks: int, rng=None) -> dict:
         "n_small_landmarks": n_small_landmarks,
         "n_large_landmarks": n_landmarks - n_small_landmarks,
         "n_landmarks": n_landmarks,
-        "reference_size": reference,
-        "exact_within": n_small_landmarks == n_small or n_small == 1,
+        "reference_size": _reference_size(n, n_landmarks, n_small, n_small_landmarks),
     }
+
+
+def _landmark_columns(z, alloc: dict, backend: str):
+    """The points every sample is measured against, i.e. the columns of ``D``.
+
+    All of them in the full regime, the chosen landmark subset otherwise.
+    """
+    if alloc["regime"] == "full":
+        return z
+    return z[_index_like(alloc["landmarks"], z, backend)]
 
 
 def _warn_reference_size(alloc: dict, permutations: int) -> None:
@@ -378,20 +400,19 @@ def _warn_reference_size(alloc: dict, permutations: int) -> None:
     if reference >= floor:
         return
 
-    hint = {
-        "singleton": (
+    if alloc["regime"] == "full":
+        hint = "the samples are too small for a permutation test at this resolution"
+    elif alloc["regime"] == "singleton":
+        hint = (
             f"the small group holds a single point, so the reference set is "
-            f"max(n_landmarks, n - n_landmarks); move n_landmarks (currently "
-            f"{alloc['n_landmarks']}) further from half the pooled sample size"
-        ),
-        "full": "the samples are too small for a permutation test at this resolution",
-    }.get(
-        alloc["regime"],
-        f"use more landmarks (currently {alloc['n_landmarks']}) or more samples",
-    )
+            f"n - n_landmarks; use fewer landmarks (currently {alloc['n_landmarks']}), "
+            f"well under half the pooled sample size"
+        )
+    else:
+        hint = f"use more landmarks (currently {alloc['n_landmarks']}) or more samples"
     warn(
         PermutationResolutionWarning(
-            f"the {alloc['regime']!r} landmark allocation reaches only {reference:,} distinct "
+            f"the {alloc['regime']!r} allocation reaches only {reference:,} distinct "
             f"label assignments, so the smallest attainable p-value is about "
             f"{1.0 / reference:.3g} no matter how many permutations are drawn "
             f"({permutations} requested): {hint}."
@@ -426,7 +447,9 @@ def _label_drawer(prep: dict, rng):
         def draw(rows):
             U = torch.zeros((rows, n), dtype=ref.dtype, device=ref.device)
             for idx, k in parts:
-                keys = torch.rand((rows, idx.numel()), generator=gen, device=ref.device)
+                keys = torch.rand(
+                    (rows, idx.numel()), generator=gen, device=ref.device, dtype=ref.dtype
+                )
                 pick = torch.topk(keys, k, dim=1, largest=False, sorted=False).indices
                 U.scatter_(1, idx[pick], 1.0)
             return U
@@ -490,142 +513,261 @@ def _enumerate_label_blocks(prep: dict, batch_size: int):
 
 
 # ---------------------------------------------------------------- statistic
+#
+# The energy statistic is a fixed combination of three block means -- the mean
+# cross-group distance and the two mean within-group distances:
+#
+#     E = (n_small * n_large / n) * (2 * cross - small - large)
+#
+# Each mean is a block of the distance matrix over its pair count, and every
+# one of those counts is a constant: the subgroup S_L x S_{L^c} holds the
+# per-group landmark counts fixed. So preparing a run means centring the
+# matrix and recording the counts; evaluating a batch of labellings means
+# forming the block sums and dividing.
+#
+# Writing u for a row of the (B, n) small-group indicator and v = u[landmarks]
+# for its restriction to the landmark columns, each block sum is a bilinear
+# form and one matrix product yields all four:
+#
+#     S_ss = u @ D @ v                 S_sl = u @ D @ 1 - S_ss
+#     S_ls = v @ (1 @ D) - S_ss        S_ll = total - S_ss - S_sl - S_ls
+#
+# The three regimes differ in which of those blocks survive, by enough that
+# each gets its own prepare/evaluate pair rather than a shared one with the
+# differences hidden in coefficients.
 
 
 def _prepare_statistic(D, alloc: dict, backend: str) -> dict:
-    """Precompute everything that is constant across permutations.
+    """Precompute everything constant across permutations, for this regime."""
+    prepare = {"full": _prepare_full, "singleton": _prepare_singleton}
+    return prepare.get(alloc["regime"], _prepare_landmarks)(D, alloc, backend)
 
-    Every block sum is a bilinear form in the row indicator ``u`` (length n)
-    and the landmark indicator ``v = u[landmarks]`` (length m):
 
-        u @ D @ v = sum_{i in A} sum_{k: landmarks[k] in A} D[i, k]
+def _centre(D, self_pair_rows, backend: str):
+    """Centre ``D`` on its mean and put the self-pairs back to zero.
 
-    All the denominators are constants, because the subgroup ``S_L x S_{L^c}``
-    preserves the per-group landmark counts. That lets the whole statistic
-    collapse into a single affine function of at most three per-permutation
-    scalars, whose coefficients are folded down to plain Python floats here:
+    In high dimension the pairwise distances concentrate far from zero and the
+    uncentred block sums spend most of their significant digits on an offset
+    that largely cancels, so centre before any reduction. ``self_pair_rows[k]``
+    is the point that column ``k`` was measured against; those entries have to
+    return to zero because the pair counts exclude them.
 
-        E = a_ss * S_ss + a_row * R + a_col * C + const
-
-    where ``R = u @ D @ 1`` and ``C = v @ (1 @ D)``. Everything else -- the
-    other three block sums, the pair counts, the ``n_s n_l / n`` scaling -- is
-    absorbed into those four numbers, so a permutation costs one matrix
-    product and a handful of elementwise ops rather than a dozen small
-    kernels on device.
+    Returns ``(D, offset, total)``. Add ``offset`` back to any block *mean*
+    taken on the centred matrix to recover the mean on the real distances --
+    the offset itself needs no precision, since it either cancels in
+    ``2 * cross - small - large`` or multiplies a block that is genuinely
+    absent. ``total`` is accumulated in float64 because its error does survive
+    into the reported statistic.
     """
-    n_s, n_l = alloc["n_small"], alloc["n_large"]
-    n = n_s + n_l
-    m_s, m_l = alloc["n_small_landmarks"], alloc["n_large_landmarks"]
-    landmarks = alloc["landmarks"]
-    full = alloc["regime"] == "full"
-
-    # allocate_landmarks guarantees m_l >= 1 in every regime, and m_s >= 1
-    # unless n_s == 1 (the singleton regime, where the small group has no
-    # within-group pairs to estimate), so both block means below are defined.
-
-    # The statistic is invariant to a constant offset on every non-self pair,
-    # so centre D before any reduction. In high dimension the pairwise
-    # distances concentrate far from zero, and the uncentred sums spend most of
-    # their significant digits on an offset that cancels anyway. Any constant
-    # cancels exactly, so the offset itself needs no precision -- a float32
-    # mean is fine. That is not true of `total` below, whose error survives
-    # into the reported statistic, so that one accumulates in float64.
     offset = float(D.mean())
-    D = D - offset
-    D = _zero_self_pairs(D, landmarks, backend)
+    D = _zero_self_pairs(D - offset, self_pair_rows, backend)
+    total = float(_to_numpy(D.sum(1), backend).sum(dtype=np.float64))
+    return D, offset, total
 
-    row_sums = D.sum(1)
-    total = float(_to_numpy(row_sums, backend).sum(dtype=np.float64))
 
-    # --- fold 2*mu_sl - mu_ss - mu_ll into A*S_ss + B*S_sl + C*S_ls + const --
-    a, b, c, const = 0.0, 0.0, 0.0, 0.0
-    if m_s > 0:  # both cross orientations are available
-        b += 1.0 / (n_s * m_l)
-        c += 1.0 / (n_l * m_s)
-    else:  # no small landmarks, so only one orientation exists
-        b += 2.0 / (n_s * m_l)
-    if n_s < 2:  # a lone point has no within-group pairs; its mean is -offset
-        const += offset
-    else:
-        a -= 1.0 / (m_s * (n_s - 1))
-    if n_l < 2:
-        const += offset
-    else:  # S_ll = total - S_ss - S_sl - S_ls
-        pairs_ll = m_l * (n_l - 1)
-        a += 1.0 / pairs_ll
-        b += 1.0 / pairs_ll
-        c += 1.0 / pairs_ll
-        const -= total / pairs_ll
+def _subgroup_parts(alloc: dict, n: int):
+    """``(positions, how many carry the small label)`` per half of the subgroup.
 
-    # S_sl = R - S_ss and S_ls = C - S_ss, so rewrite in terms of what a
-    # permutation actually computes, then absorb the n_s n_l / n scaling.
-    scale = n_s * n_l / n
-    a_ss, a_row, a_col = scale * (a - b - c), scale * b, scale * c
-    const *= scale
-
-    # With no small landmarks both S_ss and C are identically zero, so the
-    # matrix product is not needed at all -- a matrix-vector product against
-    # the row sums is the whole statistic.
-    needs_matrix = m_s > 0
-    if full:
-        # D is symmetric, so the column sums are the row sums and C == R.
-        a_row, a_col = a_row + a_col, 0.0
-
-    base_small = np.zeros(n)
-    base_small[alloc["small_idx"]] = 1.0
+    Those two counts are exactly what ``S_L x S_{L^c}`` holds fixed. The full
+    regime has no ``L^c``, so it is one part spanning every position.
+    """
+    if alloc["regime"] == "full":
+        return ((np.arange(n), alloc["n_small"]),)
     in_l = np.zeros(n, dtype=bool)
-    in_l[landmarks] = True
-    idx_l, idx_o = np.flatnonzero(in_l), np.flatnonzero(~in_l)
-    # Whatever the statistic reads sets the device and dtype the labels are
-    # built in, so they never have to cross a bus.
-    ref = D if needs_matrix else row_sums
+    in_l[alloc["landmarks"]] = True
+    n_small_landmarks = alloc["n_small_landmarks"]
+    return (
+        (np.flatnonzero(in_l), n_small_landmarks),
+        (np.flatnonzero(~in_l), alloc["n_small"] - n_small_landmarks),
+    )
 
+
+def _base_small(alloc: dict, n: int) -> np.ndarray:
+    """The observed labelling, as a small-group indicator."""
+    base = np.zeros(n)
+    base[alloc["small_idx"]] = 1.0
+    return base
+
+
+# ----------------------------------------------------------- full matrix
+
+
+def _prepare_full(D, alloc: dict, backend: str) -> dict:
+    """``D`` is square and symmetric, so the column sums are the row sums."""
+    n_small, n_large = alloc["n_small"], alloc["n_large"]
+    n = n_small + n_large
+    # the columns are the points themselves, so the self-pairs are the diagonal
+    D, offset, total = _centre(D, np.arange(n), backend)
     return {
-        "D": D if needs_matrix else None,
-        "ref": ref,
-        # (positions, how many of them carry the small label) for each half of
-        # the subgroup; those counts are what the subgroup holds fixed.
-        "parts": ((idx_l, m_s), (idx_o, n_s - m_s)),
-        # The landmarks cover everything in the full regime, so skip the gather.
-        "landmarks": None if full else _index_like(landmarks, D, backend),
-        "col_sums": D.sum(0) if (needs_matrix and a_col) else None,
-        "a_ss": a_ss,
-        "a_row": a_row,
-        "a_col": a_col,
-        "const": const,
-        "base_small": base_small,
+        "D": D,
+        "ref": D,
+        "parts": _subgroup_parts(alloc, n),
+        "base_small": _base_small(alloc, n),
         "backend": backend,
-        "evaluate": _evaluate_statistic,
+        "offset": offset,
+        "total": total,
+        "scale": n_small * n_large / n,
+        "n_small": n_small,
+        "n_large": n_large,
+        "evaluate": _evaluate_full,
     }
 
 
-def _evaluate_statistic(prep: dict, U) -> np.ndarray:
-    """Energy statistic for a batch of label assignments.
+def _evaluate_full(prep: dict, U) -> np.ndarray:
+    """Energy statistic for a batch of labellings, full symmetric matrix.
 
     Parameters
     ----------
-        prep (dict): output of :func:`_prepare_statistic`.
+        prep (dict): output of :func:`_prepare_full`.
         U (np.ndarray): ``(B, n)`` indicator of small-group membership.
 
     Returns
     -------
         ``(B,)`` numpy array of statistics.
     """
-    backend, D = prep["backend"], prep["D"]
-    Us = _asarray_like(U, prep["ref"], backend)
+    backend, offset = prep["backend"], prep["offset"]
+    n_small, n_large = prep["n_small"], prep["n_large"]
+    u = _asarray_like(U, prep["D"], backend)
 
-    if D is None:  # no small landmarks, so ref is the row sums and they are the whole statistic
-        stat = prep["a_row"] * (Us @ prep["ref"]) + prep["const"]
-        return _to_numpy(stat, backend).astype(np.float64, copy=False)
+    W = u @ prep["D"]  # (B, n)
+    S_ss = (W * u).sum(-1)
+    S_sl = W.sum(-1) - S_ss
+    # symmetry gives S_ls == S_sl, so there is no column-sum term to form
+    S_ll = prep["total"] - S_ss - 2.0 * S_sl
 
-    Vs = Us if prep["landmarks"] is None else Us[:, prep["landmarks"]]
+    cross = S_sl / (n_small * n_large) + offset
+    # A group of one point has no within-group pairs at all, so its mean is
+    # zero on the real distances -- which is exactly where `offset` matters.
+    small = 0.0 if n_small == 1 else S_ss / (n_small * (n_small - 1)) + offset
+    large = 0.0 if n_large == 1 else S_ll / (n_large * (n_large - 1)) + offset
 
-    # One matrix product carries both scalars: W @ 1 is the row-sum term and
-    # (W * Vs) summed is the small-by-small block.
-    W = Us @ D
-    stat = prep["a_ss"] * (W * Vs).sum(-1) + prep["a_row"] * W.sum(-1) + prep["const"]
-    if prep["col_sums"] is not None:
-        stat = stat + prep["a_col"] * (Vs @ prep["col_sums"])
+    stat = prep["scale"] * (2.0 * cross - small - large)
+    return _to_numpy(stat, backend).astype(np.float64, copy=False)
+
+
+# ------------------------------------------------------------- landmarks
+
+
+def _prepare_landmarks(D, alloc: dict, backend: str) -> dict:
+    """``D`` is rectangular, and all four blocks are subsampled over columns.
+
+    Reached whenever the small group has landmarks of its own, which also
+    means it holds at least two points: ``n_small == 1`` goes to the singleton
+    pair below. ``n_large == 1`` forces ``n <= 2``, which is always full.
+    """
+    n_small, n_large = alloc["n_small"], alloc["n_large"]
+    n_small_landmarks = alloc["n_small_landmarks"]
+    n_large_landmarks = alloc["n_large_landmarks"]
+    n = n_small + n_large
+    D, offset, total = _centre(D, alloc["landmarks"], backend)
+    return {
+        "D": D,
+        "ref": D,
+        "col_sums": D.sum(0),
+        "landmarks": _index_like(alloc["landmarks"], D, backend),
+        "parts": _subgroup_parts(alloc, n),
+        "base_small": _base_small(alloc, n),
+        "backend": backend,
+        "offset": offset,
+        "total": total,
+        "scale": n_small * n_large / n,
+        # pairs behind each block: rows times landmark columns, self-pairs out
+        "ss_pairs": n_small_landmarks * (n_small - 1),
+        "sl_pairs": n_small * n_large_landmarks,
+        "ls_pairs": n_large * n_small_landmarks,
+        "ll_pairs": n_large_landmarks * (n_large - 1),
+        "evaluate": _evaluate_landmarks,
+    }
+
+
+def _evaluate_landmarks(prep: dict, U) -> np.ndarray:
+    """Energy statistic for a batch of labellings, rectangular matrix.
+
+    Parameters
+    ----------
+        prep (dict): output of :func:`_prepare_landmarks`.
+        U (np.ndarray): ``(B, n)`` indicator of small-group membership.
+
+    Returns
+    -------
+        ``(B,)`` numpy array of statistics.
+    """
+    backend, offset = prep["backend"], prep["offset"]
+    u = _asarray_like(U, prep["D"], backend)
+    v = u[:, prep["landmarks"]]  # the same indicator, restricted to the columns
+
+    W = u @ prep["D"]  # (B, m)
+    S_ss = (W * v).sum(-1)
+    S_sl = W.sum(-1) - S_ss
+    S_ls = v @ prep["col_sums"] - S_ss
+    S_ll = prep["total"] - S_ss - S_sl - S_ls
+
+    # The cross block is sampled in both orientations here, small rows against
+    # large columns and large rows against small columns. They estimate the
+    # same mean over different pairs, so average them.
+    cross = 0.5 * (S_sl / prep["sl_pairs"] + S_ls / prep["ls_pairs"]) + offset
+    small = S_ss / prep["ss_pairs"] + offset
+    large = S_ll / prep["ll_pairs"] + offset
+
+    stat = prep["scale"] * (2.0 * cross - small - large)
+    return _to_numpy(stat, backend).astype(np.float64, copy=False)
+
+
+# ------------------------------------------------------------- singleton
+
+
+def _prepare_singleton(D, alloc: dict, backend: str) -> dict:
+    """The small group is one point, deliberately kept out of the landmarks.
+
+    With no small-group landmarks two of the four blocks vanish: ``S_ss`` and
+    ``S_ls`` have no columns to sum over. The only quantity left that varies
+    with the labelling is the row sum of whichever point carries the small
+    label, so the matrix is reduced to its row sums here and never touched
+    again -- there is no matrix product per permutation, only a dot product.
+    """
+    n_large = alloc["n_large"]
+    n_large_landmarks = alloc["n_large_landmarks"]
+    n = 1 + n_large
+    D, offset, total = _centre(D, alloc["landmarks"], backend)
+    return {
+        "ref": D,
+        "row_sums": D.sum(1),
+        "parts": _subgroup_parts(alloc, n),
+        "base_small": _base_small(alloc, n),
+        "backend": backend,
+        "offset": offset,
+        "total": total,
+        "scale": n_large / n,
+        # the one small point against every large landmark
+        "sl_pairs": n_large_landmarks,
+        "ll_pairs": n_large_landmarks * (n_large - 1),
+        "evaluate": _evaluate_singleton,
+    }
+
+
+def _evaluate_singleton(prep: dict, U) -> np.ndarray:
+    """Energy statistic for a batch of labellings, one-point small group.
+
+    Parameters
+    ----------
+        prep (dict): output of :func:`_prepare_singleton`.
+        U (np.ndarray): ``(B, n)`` indicator of small-group membership.
+
+    Returns
+    -------
+        ``(B,)`` numpy array of statistics.
+    """
+    backend, offset = prep["backend"], prep["offset"]
+    u = _asarray_like(U, prep["row_sums"], backend)
+
+    S_sl = u @ prep["row_sums"]  # S_ss and S_ls are empty blocks
+    S_ll = prep["total"] - S_sl
+
+    cross = S_sl / prep["sl_pairs"] + offset
+    small = 0.0  # one point, no within-group pairs: zero on the real distances
+    large = S_ll / prep["ll_pairs"] + offset
+
+    stat = prep["scale"] * (2.0 * cross - small - large)
     return _to_numpy(stat, backend).astype(np.float64, copy=False)
 
 
@@ -640,7 +782,7 @@ def _containment_curve(prep: dict, U):
     Us = _asarray_like(U, D, backend)
     Xs = Us if prep["x_is_small"] else 1.0 - Us
     Vx = Xs if prep["landmarks"] is None else Xs[:, prep["landmarks"]]
-    depth = (D @ (1.0 - Vx).T) / prep["m_y"]
+    depth = (D @ (1.0 - Vx).T) / prep["n_y_landmarks"]
     order = (-depth).argsort(0)
     ranked_x = _to_numpy(_take_along0(Xs.T, order, backend), backend)
     ranked_y = _to_numpy(_take_along0((1.0 - Xs).T, order, backend), backend)
@@ -667,14 +809,16 @@ def _prepare_containment(D, alloc: dict, backend: str, x_is_small: bool) -> dict
     Unlike the energy distance this is *not* symmetric in x and y, which is the
     whole point.
     """
-    n_s, n_l = alloc["n_small"], alloc["n_large"]
-    n = n_s + n_l
-    m_s, m_l = alloc["n_small_landmarks"], alloc["n_large_landmarks"]
-    landmarks = alloc["landmarks"]
+    n = alloc["n_small"] + alloc["n_large"]
     full = alloc["regime"] == "full"
-    m_y = m_l if x_is_small else m_s
-    n_y = n_l if x_is_small else n_s
-    if m_y < 1:
+    # y is whichever group x is not.
+    n_y = alloc["n_large"] if x_is_small else alloc["n_small"]
+    if full:  # every point is a column, so every y point is one
+        self_pair_rows, n_y_landmarks = np.arange(n), n_y
+    else:
+        self_pair_rows = alloc["landmarks"]
+        n_y_landmarks = alloc["n_large_landmarks"] if x_is_small else alloc["n_small_landmarks"]
+    if n_y_landmarks < 1:
         raise ValueError(
             "the containing sample has no landmarks, so depth is unestimable; "
             "use more landmarks or the full matrix"
@@ -683,23 +827,17 @@ def _prepare_containment(D, alloc: dict, backend: str, x_is_small: bool) -> dict
     # Ranks are invariant to a constant offset, but zeroing the self-pairs
     # still matters: a y point counting its own zero distance would look
     # artificially deep.
-    D = D - float(D.mean())
-    D = _zero_self_pairs(D, landmarks, backend)
-
-    base_small = np.zeros(n)
-    base_small[alloc["small_idx"]] = 1.0
-    in_l = np.zeros(n, dtype=bool)
-    in_l[landmarks] = True
+    D, _, _ = _centre(D, self_pair_rows, backend)
 
     return {
         "D": D,
         "ref": D,
-        "parts": ((np.flatnonzero(in_l), m_s), (np.flatnonzero(~in_l), n_s - m_s)),
-        "landmarks": None if full else _index_like(landmarks, D, backend),
+        "parts": _subgroup_parts(alloc, n),
+        "landmarks": None if full else _index_like(alloc["landmarks"], D, backend),
         "x_is_small": x_is_small,
-        "m_y": float(m_y),
+        "n_y_landmarks": float(n_y_landmarks),
         "n_y": float(n_y),
-        "base_small": base_small,
+        "base_small": _base_small(alloc, n),
         "backend": backend,
         "evaluate": _evaluate_containment,
     }
@@ -713,7 +851,7 @@ def _evaluate_containment(prep: dict, U) -> np.ndarray:
     Vx = Xs if prep["landmarks"] is None else Xs[:, prep["landmarks"]]
 
     # Depth of every pooled point against each labelling's y set.
-    depth = (D @ (1.0 - Vx).T) / prep["m_y"]  # (n, B)
+    depth = (D @ (1.0 - Vx).T) / prep["n_y_landmarks"]  # (n, B)
 
     # Rank by depth, most peripheral first; the running count of y points is
     # then #{j in y : d_j >= d_i} without ever materialising a comparison.
@@ -794,17 +932,18 @@ def permutation_energy_test(
 
     n1, n2 = len(x), len(y)
     n = n1 + n2
-    # More landmarks than points is just the full matrix; anything else
-    # nonsensical is rejected by allocate_landmarks, which owns that check.
+    if min(n1, n2) < 1:
+        raise ValueError(f"both samples need at least one point, got n1={n1}, n2={n2}")
+    # More landmarks than points is just the full matrix.
     m = n if n_landmarks is None else min(int(n_landmarks), n)
+    if m < 2:
+        raise ValueError(f"need at least 2 landmarks, got n_landmarks={n_landmarks}")
 
     rng = _as_rng(rng)
-    alloc = allocate_landmarks(n1, n2, m, rng)
+    alloc = _allocate(n1, n2, m, rng)
     _warn_reference_size(alloc, permutations)
 
-    landmarks = alloc["landmarks"]
-    zc = z if alloc["regime"] == "full" else z[_index_like(landmarks, z, backend)]
-    dmatrix = _cdist(z, zc, backend)
+    dmatrix = _cdist(z, _landmark_columns(z, alloc, backend), backend)
     assert _all_finite(dmatrix, backend), (
         "Distance matrix contains NaN or Inf! Consider normalizing values to be "
         "more stable (i.e. z-score norm)."
@@ -1210,10 +1349,9 @@ def containment_pit_plot(
     n = n1 + n2
     m = n if n_landmarks is None else min(int(n_landmarks), n)
 
-    alloc = allocate_landmarks(n1, n2, m, _as_rng(rng))
-    landmarks = alloc["landmarks"]
-    zc = z if alloc["regime"] == "full" else z[_index_like(landmarks, z, backend)]
-    prep = _prepare_containment(_cdist(z, zc, backend), alloc, backend, n1 <= n2)
+    alloc = _allocate(n1, n2, m, _as_rng(rng))
+    D = _cdist(z, _landmark_columns(z, alloc, backend), backend)
+    prep = _prepare_containment(D, alloc, backend, n1 <= n2)
 
     observed = _containment_curve(prep, prep["base_small"][None, :])[0] / n1
     n_y = int(prep["n_y"])
