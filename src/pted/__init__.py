@@ -1,4 +1,4 @@
-from .pted import pted, pted_coverage_test
+from .pted import pted, pted_coverage_test, pted_containment_test
 from .tests import test
 from .utils import hdp_coverage_test
 from ._version import version as __version__  # noqa
@@ -9,6 +9,7 @@ __email__ = "connorstone628@gmail.com"
 __all__ = [
     "pted",
     "pted_coverage_test",
+    "pted_containment_test",
     "hdp_coverage_test",
     "test",
     "__version__",

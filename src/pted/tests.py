@@ -6,11 +6,14 @@ def test():
     np.random.seed(42)
     # example 2 sample test
     D = 300
-    for _ in range(20):
-        x = np.random.normal(size=(100, D))
-        y = np.random.normal(size=(100, D))
-        p = pted(x, y)
-        assert p > 1e-2 and p < 0.99, f"p-value {p} is not in the expected range (U(0,1))"
+    # Under the null these are U(0,1), so any single draw can land anywhere:
+    # check the batch, not each p-value. Asserting 0.01 < p < 0.99 on each of
+    # 20 uniform draws fails a third of the time on its own.
+    pvals = [
+        pted(np.random.normal(size=(100, D)), np.random.normal(size=(100, D))) for _ in range(20)
+    ]
+    median = float(np.median(pvals))
+    assert 0.1 < median < 0.9, f"null p-values are not U(0,1): median {median}, {pvals}"
 
     x = np.random.normal(size=(100, D))
     y = np.random.uniform(size=(100, D))
