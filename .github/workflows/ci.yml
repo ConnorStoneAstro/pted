@@ -15,12 +15,17 @@ concurrency:
 env:
   FORCE_COLOR: 3
   PROJECT_NAME: "pted"
+  # Keep matplotlib off any GUI backend. The runners ship a tkinter that
+  # matplotlib will happily select and that then fails to initialise Tcl.
+  # tests/conftest.py sets this too; belt and braces, and it also covers any
+  # plotting reached outside pytest.
+  MPLBACKEND: Agg
 
 jobs:
   build:
     runs-on: ${{matrix.os}}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
         os: [ubuntu-latest, windows-latest, macOS-latest]
@@ -51,11 +56,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-cov wheel
 
-      - name: Install torch # no torch on 3.13 to test no-torch scenario
-        if: ${{ matrix.python-version != '3.13' }}
-        run: |
-          pip install torch
-
       # We only want to install this on one run, because otherwise we'll have
       # duplicate annotations.
       - name: Install error reporter
@@ -67,6 +67,13 @@ jobs:
         run: |
           pip install -e .[dev]
           pip show ${{ env.PROJECT_NAME }}
+
+      # The dev extra deliberately omits torch, so skipping this leaves 3.13
+      # genuinely torch-free and the no-torch code path gets exercised.
+      - name: Install torch # no torch on 3.13 to test no-torch scenario
+        if: ${{ matrix.python-version != '3.13' }}
+        run: |
+          pip install -e .[torch]
 
       - name: Test with pytest
         run: |
