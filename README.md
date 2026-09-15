@@ -239,8 +239,8 @@ by default).
 The **vertical line** marks threshold p-value (0.05 by default). Parts of the
 CDF to the right of this line are embedded in `y` at the threshold level and so
 likely are contained. Points to its left are peripheral relative to `y` and so
-this may suggest the values are not contained. However, many values of `x` are
-being tested some some leakage to low p-values are expected, which is why the
+this may suggest the values are not contained. However, when many values of `x`
+are being tested some leakage to low p-values are expected, which is why the
 uniform-upper-bound line is also plotted.
 
 Read them together rather than as a decision rule. A curve with points to the
@@ -333,7 +333,7 @@ def pted(
 * **n_landmarks** *(Optional[int])*: if not None, estimate the energy distance from a rectangular distance matrix instead of the full pairwise matrix. `n_landmarks` points are drawn from the pooled sample as "landmarks", and only the distance from every sample to each landmark is computed, so the cost drops from `O(n^2 d)` to `O(n m d)` for `m = n_landmarks`. A value covering the whole pooled sample, or None, runs the exact full-matrix computation.
 * **two_tailed** *(bool)*: if True, compute a two-tailed p-value. This is useful if you want to reject the null hypothesis when x and y are either too similar or too different. If False, only checks for dissimilarity but is more sensitive. Default is True.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of permutation tests. Default is False.
-* **batch_size** *(Optional[int])*: number of permutations evaluated per matrix product. Larger values are faster (especially on GPU) at `O(batch_size * n)` extra memory. None picks a size that keeps a batch to a few million elements.
+* **batch_size** *(Optional[int])*: number of permutations evaluated per matrix product. Larger values are faster (especially on GPU) at `O(batch_size * n)` extra memory. None picks the largest size that keeps the batch-scaling tensors within 1 GiB and bounds one batch's matrix product, so a run cannot allocate unboundedly whatever the sample shape.
 * **rng**: seed, `np.random.Generator`, or None to draw from the global numpy state, so `np.random.seed` still controls reproducibility.
 
 ### Coverage test
@@ -368,7 +368,7 @@ def pted_coverage_test(
 * **pit_plot** *(Optional[str])*: If given, the path/filename to save a Probability Integral Transform (PIT) plot of the per-simulation p-values against the expected uniform distribution, with a shaded KS confidence band.
 * **pit_confidence** *(float)*: Confidence level for the PIT plot's simultaneous band. Default is 0.95 (95%). Only used when `pit_plot` is not None.
 * **prog_bar** *(bool)*: if True, show a progress bar to track the progress of simulations. Default is False.
-* **batch_size** *(Optional[int])*: number of permutations evaluated per matrix product. Larger values are faster (especially on GPU) at `O(batch_size * n)` extra memory. None picks a size that keeps a batch to a few million elements.
+* **batch_size** *(Optional[int])*: number of permutations evaluated per matrix product. Larger values are faster (especially on GPU) at `O(batch_size * n)` extra memory. None picks the largest size that keeps the batch-scaling tensors within 1 GiB and bounds one batch's matrix product, so a run cannot allocate unboundedly whatever the sample shape.
 * **rng**: seed, `np.random.Generator`, or None to draw from the global numpy state, so `np.random.seed` still controls reproducibility.
 
 ## GPU Compatibility

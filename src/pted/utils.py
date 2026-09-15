@@ -232,7 +232,7 @@ def _as_rng(rng) -> np.random.Generator:
     if isinstance(rng, np.random.Generator):
         return rng
     if rng is None:
-        return np.random.default_rng(np.random.randint(0, 2**32))
+        return np.random.default_rng(np.random.randint(0, 2**32, dtype=np.uint32))
     return np.random.default_rng(rng)
 
 
@@ -240,7 +240,10 @@ class PermutationResolutionWarning(UserWarning):
     """The permutation group is too small to resolve the requested p-value."""
 
 
-# Target element count for a batch of permutations, bounding peak memory.
+# Budgets for the automatic batch size, each bounding a different resource:
+# the memory the batch-scaling tensors hold at once, and the work one batch
+# does between progress updates.
+_BATCH_BYTES = 2**30
 _BATCH_ELEMENTS = 2**30
 
 
@@ -565,6 +568,29 @@ def _centre(D, self_pair_rows, backend: str):
     return D, offset, total
 
 
+def _itemsize(a, backend: str) -> int:
+    """Bytes per element of ``a``."""
+    return a.element_size() if backend == "torch" else a.dtype.itemsize
+
+
+def _auto_batch_size(ref, backend: str, row_elements: int, row_work: int) -> int:
+    """Permutations per batch when the caller names none. Two caps, smaller wins.
+
+    ``row_elements`` is how many array elements one permutation needs across
+    the tensors an evaluator holds live at once, so the first cap is a direct
+    byte budget on them. Sizing off the matrix product alone would miss it: a
+    large sample against few landmarks -- which is exactly what landmarks are
+    for -- looks cheap as ``n * m`` while the batch really carries ``rows * n``.
+
+    ``row_work`` is the matrix-product cost of one permutation. Capping that
+    keeps a single batch from running for minutes without touching the
+    progress bar or giving the caller a chance to interrupt.
+    """
+    by_memory = _BATCH_BYTES // (row_elements * _itemsize(ref, backend))
+    by_work = _BATCH_ELEMENTS // row_work
+    return max(1, min(by_memory, by_work))
+
+
 def _subgroup_parts(alloc: dict, n: int):
     """``(positions, how many carry the small label)`` per half of the subgroup.
 
@@ -609,6 +635,9 @@ def _prepare_full(D, alloc: dict, backend: str) -> dict:
         "scale": n_small * n_large / n,
         "n_small": n_small,
         "n_large": n_large,
+        # per permutation: the drawn labels, u, W = u @ D, and the W * u
+        # temporary, all (rows, n); the block sums that follow are scalars
+        "batch_size": _auto_batch_size(D, backend, 4 * n, n * n),
         "evaluate": _evaluate_full,
     }
 
@@ -658,7 +687,7 @@ def _prepare_landmarks(D, alloc: dict, backend: str) -> dict:
     n_small, n_large = alloc["n_small"], alloc["n_large"]
     n_small_landmarks = alloc["n_small_landmarks"]
     n_large_landmarks = alloc["n_large_landmarks"]
-    n = n_small + n_large
+    n, m = n_small + n_large, n_small_landmarks + n_large_landmarks
     D, offset, total = _centre(D, alloc["landmarks"], backend)
     return {
         "D": D,
@@ -676,6 +705,9 @@ def _prepare_landmarks(D, alloc: dict, backend: str) -> dict:
         "sl_pairs": n_small * n_large_landmarks,
         "ls_pairs": n_large * n_small_landmarks,
         "ll_pairs": n_large_landmarks * (n_large - 1),
+        # per permutation: the drawn labels and u at (rows, n), then v, W and
+        # the W * v temporary at (rows, m)
+        "batch_size": _auto_batch_size(D, backend, 2 * n + 3 * m, n * m),
         "evaluate": _evaluate_landmarks,
     }
 
@@ -729,9 +761,10 @@ def _prepare_singleton(D, alloc: dict, backend: str) -> dict:
     n_large_landmarks = alloc["n_large_landmarks"]
     n = 1 + n_large
     D, offset, total = _centre(D, alloc["landmarks"], backend)
+    row_sums = D.sum(1)
     return {
-        "ref": D,
-        "row_sums": D.sum(1),
+        "ref": row_sums,
+        "row_sums": row_sums,
         "parts": _subgroup_parts(alloc, n),
         "base_small": _base_small(alloc, n),
         "backend": backend,
@@ -741,6 +774,9 @@ def _prepare_singleton(D, alloc: dict, backend: str) -> dict:
         # the one small point against every large landmark
         "sl_pairs": n_large_landmarks,
         "ll_pairs": n_large_landmarks * (n_large - 1),
+        # per permutation: the drawn labels and u, nothing wider -- and a dot
+        # product against the row sums rather than a matrix product
+        "batch_size": _auto_batch_size(row_sums, backend, 2 * n, n),
         "evaluate": _evaluate_singleton,
     }
 
@@ -811,6 +847,7 @@ def _prepare_containment(D, alloc: dict, backend: str, x_is_small: bool) -> dict
     """
     n = alloc["n_small"] + alloc["n_large"]
     full = alloc["regime"] == "full"
+    m = n if full else len(alloc["landmarks"])
     # y is whichever group x is not.
     n_y = alloc["n_large"] if x_is_small else alloc["n_small"]
     if full:  # every point is a column, so every y point is one
@@ -839,6 +876,10 @@ def _prepare_containment(D, alloc: dict, backend: str, x_is_small: bool) -> dict
         "n_y": float(n_y),
         "base_small": _base_small(alloc, n),
         "backend": backend,
+        # The widest path of the three: the depth ranking holds the labels,
+        # the depths, the sort order, both ranked indicators and the p-values
+        # at (rows, n) simultaneously, so it needs the tightest batches.
+        "batch_size": _auto_batch_size(D, backend, 12 * n + 2 * m, n * m),
         "evaluate": _evaluate_containment,
     }
 
@@ -908,7 +949,9 @@ def permutation_energy_test(
         prog_bar (bool): show a progress bar over permutations.
         batch_size (Optional[int]): permutations evaluated per matrix product.
             Larger is faster on GPU, at ``O(batch_size * n)`` extra memory.
-            None picks a size that bounds the batch at a few million elements.
+            None picks the largest size that keeps the batch-scaling tensors
+            within 1 GiB and one batch's matrix product bounded, so a run
+            cannot allocate unboundedly whatever the sample shape.
         rng: seed, ``np.random.Generator``, or None to draw from the global
             numpy state (so ``np.random.seed`` still applies).
 
@@ -920,6 +963,22 @@ def permutation_energy_test(
         case it holds every one of them except the observed labelling
         (``reference_size - 1`` entries) and the resulting p-value is exact
         rather than sampled.
+    """
+    prep, alloc, rng = _prepare_test(x, y, n_landmarks, rng, containment)
+    return _permutation_distribution(prep, alloc, permutations, prog_bar, batch_size, rng)
+
+
+def _prepare_test(x, y, n_landmarks: Optional[int], rng, containment: bool):
+    """Everything that does not depend on the permutations.
+
+    Validates the samples, picks the landmarks, builds the distance matrix and
+    precomputes the statistic -- which is all of the expensive work, since the
+    distance matrix is ``O(n * m * d)``. Split out from the permutation loop so
+    that a caller wanting both a test and a diagnostic built from the *same*
+    landmarks pays for it once; see :func:`containment_pit_plot`.
+
+    Returns ``(prep, alloc, rng)``. The generator is the coerced one, already
+    advanced past the landmark draw, so passing it on continues the stream.
     """
     if is_torch_tensor(x):
         assert torch.__version__ != "null", "PyTorch is not installed! try: `pip install torch`"
@@ -941,7 +1000,6 @@ def permutation_energy_test(
 
     rng = _as_rng(rng)
     alloc = _allocate(n1, n2, m, rng)
-    _warn_reference_size(alloc, permutations)
 
     dmatrix = _cdist(z, _landmark_columns(z, alloc, backend), backend)
     assert _all_finite(dmatrix, backend), (
@@ -950,17 +1008,22 @@ def permutation_energy_test(
     )
 
     if containment:
-        prep = _prepare_containment(dmatrix, alloc, backend, n1 <= n2)
-    else:
-        prep = _prepare_statistic(dmatrix, alloc, backend)
-    evaluate = prep["evaluate"]
+        return _prepare_containment(dmatrix, alloc, backend, n1 <= n2), alloc, rng
+    return _prepare_statistic(dmatrix, alloc, backend), alloc, rng
 
+
+def _permutation_distribution(
+    prep: dict, alloc: dict, permutations: int, prog_bar: bool, batch_size, rng
+) -> tuple[float, np.ndarray]:
+    """Evaluate the observed labelling and the permuted ones."""
+    _warn_reference_size(alloc, permutations)
+    evaluate = prep["evaluate"]
     test_stat = float(evaluate(prep, prep["base_small"][None, :])[0])
     assert np.isfinite(test_stat), "Observed statistic is not finite!"
 
-    if batch_size is None:
-        batch_size = max(1, _BATCH_ELEMENTS // (n * m))
-    batch_size = max(1, int(batch_size))
+    # Each preparer sized its own batches against the tensors its evaluator
+    # holds live, so an unset batch_size is already bounded.
+    batch_size = max(1, int(prep["batch_size"] if batch_size is None else batch_size))
 
     # Sampling more permutations than the subgroup has members just redraws the
     # observed labelling over and over, and every such tie inflates q under the
@@ -1337,24 +1400,27 @@ def containment_pit_plot(
         n_landmarks: as for :func:`pted.pted_containment_test`.
         rng: seed, ``np.random.Generator``, or None. Only picks the landmarks.
     """
+    prep, _, _ = _prepare_test(x, y, n_landmarks, rng, containment=True)
+    _draw_containment_pit(prep, saveto, confidence, threshold)
+
+
+def _draw_containment_pit(prep: dict, saveto, confidence: float, threshold: float):
+    """Draw the containment PIT plot from an already-prepared statistic.
+
+    Takes ``prep`` rather than the samples so that a caller which has just run
+    the test can reuse it: the distance matrix and the landmark choice are then
+    literally the same objects the statistic was computed from, rather than an
+    independent redraw that would describe a different landmark set.
+    """
     try:
         import matplotlib.pyplot as plt
     except ImportError:
         warn("No containment PIT plot generated! Please install matplotlib.")
         return
 
-    backend = _backend(x)
-    z = _concatenate((x, y), backend)
-    n1, n2 = len(x), len(y)
-    n = n1 + n2
-    m = n if n_landmarks is None else min(int(n_landmarks), n)
-
-    alloc = _allocate(n1, n2, m, _as_rng(rng))
-    D = _cdist(z, _landmark_columns(z, alloc, backend), backend)
-    prep = _prepare_containment(D, alloc, backend, n1 <= n2)
-
-    observed = _containment_curve(prep, prep["base_small"][None, :])[0] / n1
     n_y = int(prep["n_y"])
+    n1 = prep["base_small"].size - n_y  # x is whichever group y is not
+    observed = _containment_curve(prep, prep["base_small"][None, :])[0] / n1
 
     # Under H0 the depth p-values are uniform on the (n_y + 1)-point lattice,
     # so the ordinary lattice band applies -- upper edge only.

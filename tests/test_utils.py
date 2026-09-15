@@ -23,8 +23,10 @@ from pted.utils import (
     permutation_energy_test,
     _cdist,
     _label_drawer,
+    _BATCH_BYTES,
     _index_like,
     _landmark_columns,
+    _prepare_test,
     _prepare_statistic,
 )
 
@@ -657,3 +659,63 @@ def test_lattice_band_one_sided_lowers_the_ceiling():
     assert np.all(one_sided <= two_sided)
     assert np.any(one_sided < two_sided), "and strictly lower somewhere"
     assert abs((1 - achieved) - 0.05) < 0.01, f"level was {1 - achieved}"
+
+
+# ---------------------------------------------------------------------------
+# Batch sizing and setup reuse
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "n1,n2,m",
+    [
+        (1, 100_000, 10),  # huge sample, few landmarks: rows x n is the cost
+        (2_000, 3_000, 50),
+        (200, 300, None),  # full matrix
+        (50, 50, 8),
+    ],
+)
+@pytest.mark.parametrize("containment", [False, True])
+def test_auto_batch_size_stays_within_the_memory_budget(n1, n2, m, containment):
+    """No batch-scaling tensor may exceed the byte budget, whatever the shape.
+
+    Every regime holds at least one (rows, n) tensor, so bounding that one is
+    a necessary condition and does not restate the per-regime element counts.
+    Sizing off the matrix product alone misses this entirely: n * m is small
+    exactly when n is large and m is tiny."""
+    prep, _, _ = _prepare_test(np.zeros((n1, 2)), np.zeros((n2, 2)), m, 0, containment)
+    n = n1 + n2
+    held = prep["batch_size"] * n * prep["ref"].dtype.itemsize
+    assert held <= _BATCH_BYTES, f"a batch would hold {held / 2**30:.2f} GiB of (rows, n)"
+    assert prep["batch_size"] >= 1
+
+
+def test_containment_plot_reuses_the_test_setup(tmp_path, monkeypatch):
+    """Asking for the plot must not re-run the allocation or the distance
+    matrix. Doing so cost a second O(n*m*d) build, and -- because _as_rng
+    passes a Generator through untouched -- drew landmarks from an already
+    advanced stream, so the figure described a different landmark set than the
+    statistic it was meant to explain."""
+    import pted.utils as U
+    from pted import pted_containment_test
+
+    seen = []
+    original = U._allocate
+    monkeypatch.setattr(U, "_allocate", lambda *a, **k: seen.append(original(*a, **k)) or seen[-1])
+
+    rng = np.random.default_rng(0)
+    x, y = rng.standard_normal((30, 5)) * 0.5, rng.standard_normal((80, 5))
+    out = str(tmp_path / "containment.png")
+
+    for label in ("Generator", "None"):
+        seen.clear()
+        pted_containment_test(
+            x,
+            y,
+            permutations=50,
+            n_landmarks=40,
+            rng=np.random.default_rng(3) if label == "Generator" else None,
+            pit_plot=out,
+        )
+        assert len(seen) == 1, f"rng={label}: allocated landmarks {len(seen)} times"
+    assert os.path.exists(out)

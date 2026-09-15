@@ -4,7 +4,9 @@ import numpy as np
 
 from .utils import (
     permutation_energy_test as _energy_test,
-    containment_pit_plot as _containment_pit_plot,
+    _prepare_test,
+    _permutation_distribution,
+    _draw_containment_pit,
     _as_rng,
     two_tailed_p,
     confidence_alert,
@@ -16,8 +18,8 @@ __all__ = ["pted", "pted_coverage_test", "pted_containment_test"]
 
 
 def pted(
-    x: Union[np.ndarray, "Tensor", "jax.Array"],
-    y: Union[np.ndarray, "Tensor", "jax.Array"],
+    x,
+    y,
     permutations: int = 1000,
     return_all: bool = False,
     n_landmarks: Optional[int] = None,
@@ -149,10 +151,8 @@ def pted(
     assert (
         x.shape[1:] == y.shape[1:]
     ), f"x and y samples must have the same shape (past first dim), not {x.shape} and {y.shape}"
-    if len(x.shape) > 2:
-        x = x.reshape(x.shape[0], -1)
-    if len(y.shape) > 2:
-        y = y.reshape(y.shape[0], -1)
+    x = x.reshape(x.shape[0], -1)
+    y = y.reshape(y.shape[0], -1)
 
     # A landmark count covering the whole pooled sample lands in the exact
     # full-matrix regime, so there is no separate branch for it here.
@@ -184,8 +184,8 @@ def pted(
 
 
 def pted_containment_test(
-    x: Union[np.ndarray, "Tensor", "jax.Array"],
-    y: Union[np.ndarray, "Tensor", "jax.Array"],
+    x,
+    y,
     permutations: int = 1000,
     return_all: bool = False,
     n_landmarks: Optional[int] = None,
@@ -294,35 +294,19 @@ def pted_containment_test(
     assert (
         x.shape[1:] == y.shape[1:]
     ), f"x and y samples must have the same shape (past first dim), not {x.shape} and {y.shape}"
-    if len(x.shape) > 2:
-        x = x.reshape(x.shape[0], -1)
-    if len(y.shape) > 2:
-        y = y.reshape(y.shape[0], -1)
+    x = x.reshape(x.shape[0], -1)
+    y = y.reshape(y.shape[0], -1)
 
-    test, permute = _energy_test(
-        x,
-        y,
-        permutations=permutations,
-        n_landmarks=n_landmarks,
-        prog_bar=prog_bar,
-        batch_size=batch_size,
-        rng=rng,
-        containment=True,
-    )
+    # Prepared once and used twice: the plot describes the same landmarks and
+    # the same distance matrix the statistic was computed from.
+    prep, alloc, rng = _prepare_test(x, y, n_landmarks, rng, containment=True)
+    test, permute = _permutation_distribution(prep, alloc, permutations, prog_bar, batch_size, rng)
+
+    if pit_plot is not None:
+        _draw_containment_pit(prep, pit_plot, pit_confidence, pit_threshold)
 
     # One-sided by construction: only an unusually large aggregate is evidence
     # that x reaches outside y.
-    if pit_plot is not None:
-        _containment_pit_plot(
-            x,
-            y,
-            pit_plot,
-            confidence=pit_confidence,
-            threshold=pit_threshold,
-            n_landmarks=n_landmarks,
-            rng=rng,
-        )
-
     pval = (1.0 + np.sum(permute >= test)) / (1.0 + len(permute))
     if return_all:
         return test, permute, pval
@@ -330,8 +314,8 @@ def pted_containment_test(
 
 
 def pted_coverage_test(
-    g: Union[np.ndarray, "Tensor", "jax.Array"],
-    s: Union[np.ndarray, "Tensor", "jax.Array"],
+    g,
+    s,
     permutations: int = 1000,
     warn_confidence: Optional[float] = 1e-3,
     return_all: bool = False,
@@ -468,8 +452,7 @@ def pted_coverage_test(
     assert (
         g.shape == s.shape[1:]
     ), f"g and s must have the same shape (past first dim of s), not {g.shape} and {s.shape}"
-    if len(s.shape) > 3:
-        s = s.reshape(nsamp, nsim, -1)
+    s = s.reshape(nsamp, nsim, -1)
     g = g.reshape(1, nsim, -1)
 
     # Coerce once, so the generator's state advances across simulations. Passing
