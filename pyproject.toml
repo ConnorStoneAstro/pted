@@ -36,11 +36,14 @@ Repository = "https://github.com/ConnorStoneAstro/pted"
 Issues = "https://github.com/ConnorStoneAstro/pted/issues"
 
 [project.optional-dependencies]
+# Deliberately no torch: CI installs it per matrix entry via the `torch`
+# extra below, leaving one entry without it so the no-torch code path is
+# actually exercised. Pulling it in here would defeat that. For a local
+# environment that runs the whole suite: pip install -e '.[dev,torch]'
 dev = [
     "pytest>=8.0,<9",
     "pytest-cov>=4.1,<5",
     "pytest-mock>=3.12,<4",
-    "torch>=2.0,<3",
     "jax>=0.7,<1",
     "matplotlib",
 ]
