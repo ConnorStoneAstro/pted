@@ -45,11 +45,11 @@ def plot_demo(x, y, name, E_permute=None):
     D = cdist(z, z)
     
     hist, bins = np.histogram(D[:N, :N].ravel(), bins = 50, density=True)
-    axarr[1].step(bins[:-1], hist, where="post", color = "b", linewidth = 3)
+    axarr[1].step(bins, np.append(hist, hist[-1]), where="post", color = "b", linewidth = 3)
     hist, bins = np.histogram(D[N:, N:].ravel(), bins = 50, density=True)
-    axarr[1].step(bins[:-1], hist, where="post", color = "r", linewidth = 3)
+    axarr[1].step(bins, np.append(hist, hist[-1]), where="post", color = "r", linewidth = 3)
     hist, bins = np.histogram(D[:N, N:].ravel(), bins = 50, density=True)
-    axarr[1].step(bins[:-1], hist, where="post", color = "purple", linewidth = 3)
+    axarr[1].step(bins, np.append(hist, hist[-1]), where="post", color = "purple", linewidth = 3)
     
     bx, by = 0.7, 0.7
     dx, dy = 0.13, 0.08
@@ -67,7 +67,7 @@ def plot_demo(x, y, name, E_permute=None):
     E_test = (2 * np.sum(D[:N,N:]) - np.sum(D[:N,:N]) - np.sum(D[N:,N:])) / N**2
     if E_permute is not None:
         hist, bins = np.histogram(E_permute, bins = 15)
-        axarr[2].step(bins[:-1], hist, where="post", color = "grey", linewidth = 3, label="permutations")
+        axarr[2].step(bins, np.append(hist, hist[-1]), where="post", color = "grey", linewidth = 3, label="permutations")
     axarr[2].axvline(E_test, linewidth = 3, color="k", label="test")
     axarr[2].legend()
     axarr[2].set_xlabel("Energy [2 * Exy - Exx - Eyy]")

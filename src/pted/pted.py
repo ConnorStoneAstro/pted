@@ -176,7 +176,14 @@ def pted(
 
     if distance_histogram is not None:
         _draw_distance_histogram(
-            prep, alloc, len(x), distance_histogram, distance_permutations, distance_bins, rng
+            prep,
+            alloc,
+            len(x),
+            distance_histogram,
+            distance_permutations,
+            distance_bins,
+            batch_size,
+            rng,
         )
 
     # Compute p-value. The null set is `permutations` random draws, or the

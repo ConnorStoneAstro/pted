@@ -1485,7 +1485,7 @@ def _as_density(counts, width):
     return counts / (total * width) if total else np.zeros(len(counts))
 
 
-def _draw_distance_histogram(prep, alloc, n1, saveto, permutations, bins, rng):
+def _draw_distance_histogram(prep, alloc, n1, saveto, permutations, bins, batch_size, rng):
     """Draw the distance histogram from an already-prepared statistic."""
     try:
         import matplotlib.pyplot as plt
@@ -1539,36 +1539,51 @@ def _draw_distance_histogram(prep, alloc, n1, saveto, permutations, bins, rng):
     # them by quite different amounts and each needs its own spread. Pooling
     # the three into a single band leaves the smallest group's curve escaping
     # a 16-84 band far more than 32% of the time and the cross term far less.
+    #
+    # Only the curves are kept, which are tiny; the labels behind them are a
+    # (rows, n) block, so they are drawn in batches like the test's own.
     null = None
     if permutations > 0:
-        U = _to_numpy(_label_drawer(prep, rng)(permutations), backend).astype(np.int32)
-        if n1 > n - n1:  # the drawer marks the smaller group, which here is y
-            U = 1 - U
-        null = np.array(
-            [
+        draw = _label_drawer(prep, rng)
+        batch_size = max(1, int(prep["batch_size"] if batch_size is None else batch_size))
+        curves = []
+        for start in range(0, permutations, batch_size):
+            U = _to_numpy(draw(min(batch_size, permutations - start)), backend).astype(np.int32)
+            if n1 > n - n1:  # the drawer marks the smaller group, which here is y
+                U = 1 - U
+            curves.extend(
                 [
                     _as_density(c, width)
                     for c in _component_bin_counts(bidx, bins, columns, labels, rows_per_chunk)
                 ]
                 for labels in U
-            ]
-        )  # (permutations, component, bin)
+            )
+        null = np.array(curves)  # (permutations, component, bin)
 
-    left = edges[:-1]
+    # A `where="post"` step draws from x[i] to x[i+1], so a histogram has to
+    # carry the right-hand edge and repeat the final height -- otherwise the
+    # last bin spans nothing and is silently never drawn.
+    stair = lambda heights: np.append(heights, heights[-1])
     colours = ("b", "r", "purple")
     labels = ("x to x", "y to y", "x to y")
     fig, ax = plt.subplots()
     if null is not None:
         for k, colour in enumerate(colours):
             low_k, high_k = np.percentile(null[:, k], [16, 84], axis=0)
-            ax.fill_between(left, low_k, high_k, step="post", color=colour, alpha=0.2, zorder=1)
+            ax.fill_between(
+                edges, stair(low_k), stair(high_k), step="post",
+                color=colour, alpha=0.2, zorder=1,
+            )  # fmt: skip
         ax.fill_between([], [], [], color="0.6", label="permuted 16-84%")  # one legend entry
         ax.step(
-            left, np.median(null.reshape(-1, bins), 0), where="post",
+            edges, stair(np.median(null.reshape(-1, bins), 0)), where="post",
             color="k", linewidth=1.4, zorder=2, label="permuted median",
         )  # fmt: skip
     for k, (colour, label) in enumerate(zip(colours, labels)):
-        ax.step(left, seen[k], where="post", color=colour, linewidth=2.5, zorder=3 + k, label=label)
+        ax.step(
+            edges, stair(seen[k]), where="post",
+            color=colour, linewidth=2.5, zorder=3 + k, label=label,
+        )  # fmt: skip
     ax.set_xlabel("Distance [sample pairs]")
     ax.set_ylabel("density")
     ax.set_title("Energy distance components")
@@ -1584,6 +1599,7 @@ def distance_histogram(
     permutations: int = 200,
     bins: int = 50,
     n_landmarks: Optional[int] = None,
+    batch_size: Optional[int] = None,
     rng=None,
 ):
     """Diagnostic plot for :func:`pted.pted`: *where* the two samples differ.
@@ -1624,10 +1640,13 @@ def distance_histogram(
         bins (int): histogram bins, shared by all three components.
         n_landmarks: as for :func:`pted.pted`. With landmarks the histogram
             covers the pairs the statistic actually used, not every pair.
+        batch_size (Optional[int]): relabellings drawn per batch, bounding the
+            ``O(batch_size * n)`` label block. None reuses the size the
+            statistic chose for itself.
         rng: seed, ``np.random.Generator``, or None.
     """
     prep, alloc, rng = _prepare_test(x, y, n_landmarks, rng, containment=False)
-    _draw_distance_histogram(prep, alloc, len(x), saveto, permutations, bins, rng)
+    _draw_distance_histogram(prep, alloc, len(x), saveto, permutations, bins, batch_size, rng)
 
 
 def hdp_coverage_test(

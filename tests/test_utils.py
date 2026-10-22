@@ -805,3 +805,84 @@ def test_distance_histogram_skips_when_the_matrix_is_gone(tmp_path):
             rng=0,
         )
     assert not out.exists()
+
+
+def test_distance_histogram_draws_the_final_bin(tmp_path, monkeypatch):
+    """A `where="post"` step draws from x[i] to x[i+1], so a histogram must
+    carry the right-hand edge and repeat the last height. Without that the
+    final bin spans nothing and is silently dropped from the figure."""
+    import matplotlib.pyplot as plt
+    from pted.utils import distance_histogram
+
+    captured = {}
+    real_subplots = plt.subplots
+
+    def spy(*args, **kwargs):
+        fig, ax = real_subplots(*args, **kwargs)
+        captured["ax"] = ax
+        return fig, ax
+
+    monkeypatch.setattr(plt, "subplots", spy)
+
+    rng = np.random.default_rng(0)
+    bins = 9
+    distance_histogram(
+        rng.standard_normal((40, 2)),
+        rng.standard_normal((50, 2)),
+        str(tmp_path / "bins.png"),
+        permutations=3,
+        bins=bins,
+        rng=0,
+    )
+
+    lines = captured["ax"].lines
+    assert len(lines) == 4, "three components plus the permuted median"
+    for line in lines:
+        xs, ys = line.get_xdata(), line.get_ydata()
+        assert len(xs) == bins + 1, "the right-hand edge must be carried"
+        assert len(ys) == bins + 1
+        assert ys[-1] == ys[-2], "the final height repeats, or the last bin is not drawn"
+        assert np.allclose(np.diff(xs), xs[1] - xs[0]), "edges are uniform"
+
+
+def test_distance_histogram_batches_the_labels(tmp_path, monkeypatch):
+    """Relabellings are drawn in batches summing to `permutations`, so the
+    (rows, n) label block stays bounded however many are asked for."""
+    import pted.utils as U
+
+    drawn = []
+    real_drawer = U._label_drawer
+
+    def spy(prep, rng):
+        draw = real_drawer(prep, rng)
+
+        def wrapped(rows):
+            drawn.append(rows)
+            return draw(rows)
+
+        return wrapped
+
+    monkeypatch.setattr(U, "_label_drawer", spy)
+
+    rng = np.random.default_rng(0)
+    U.distance_histogram(
+        rng.standard_normal((30, 2)),
+        rng.standard_normal((40, 2)),
+        str(tmp_path / "batched.png"),
+        permutations=7,
+        bins=6,
+        batch_size=3,
+        rng=0,
+    )
+    assert drawn == [3, 3, 1], f"expected an uneven 3+3+1 split, got {drawn}"
+
+    drawn.clear()
+    U.distance_histogram(
+        rng.standard_normal((30, 2)),
+        rng.standard_normal((40, 2)),
+        str(tmp_path / "unbatched.png"),
+        permutations=7,
+        bins=6,
+        rng=0,
+    )
+    assert sum(drawn) == 7, "an unset batch_size still draws exactly `permutations` rows"
