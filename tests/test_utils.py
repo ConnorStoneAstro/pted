@@ -719,3 +719,170 @@ def test_containment_plot_reuses_the_test_setup(tmp_path, monkeypatch):
         )
         assert len(seen) == 1, f"rng={label}: allocated landmarks {len(seen)} times"
     assert os.path.exists(out)
+
+
+# ---------------------------------------------------------------------------
+# Distance histogram diagnostic
+# ---------------------------------------------------------------------------
+
+
+def test_distance_histogram_components_match_brute_force():
+    """The bincount-by-class shortcut must agree with explicit block slicing,
+    including dropping the self-pairs the statistic also drops."""
+    from pted.utils import _component_bin_counts
+
+    rng = np.random.default_rng(3)
+    n, m, bins = 40, 12, 7
+    columns = np.sort(rng.choice(n, size=m, replace=False))
+    bidx = rng.integers(0, bins, size=(n, m)).astype(np.int32)
+    bidx[columns, np.arange(m)] = bins  # self-pairs, excluded from every block
+    u = (rng.random(n) < 0.4).astype(np.int32)
+
+    xx, yy, xy = _component_bin_counts(bidx, bins, columns, u, rows_per_chunk=7)
+
+    rows_x, cols_x = u.astype(bool), u[columns].astype(bool)
+    want = lambda r, c: np.bincount(bidx[np.ix_(r, c)].ravel(), minlength=bins + 1)[:bins]
+    assert np.array_equal(xx, want(rows_x, cols_x))
+    assert np.array_equal(yy, want(~rows_x, ~cols_x))
+    assert np.array_equal(xy, want(rows_x, ~cols_x) + want(~rows_x, cols_x))
+    # the self-pairs went nowhere: every real entry is counted exactly once
+    assert xx.sum() + yy.sum() + xy.sum() == n * m - m
+
+    # chunking is an implementation detail, not a result
+    for chunk in (1, 3, n, 2 * n):
+        assert all(
+            np.array_equal(a, b)
+            for a, b in zip((xx, yy, xy), _component_bin_counts(bidx, bins, columns, u, chunk))
+        )
+
+
+@pytest.mark.parametrize("n1,n2,m", [(60, 90, None), (60, 90, 40)])
+def test_distance_histogram_writes_a_file(tmp_path, n1, n2, m):
+    """Both the pted trigger and the standalone entry point produce a figure,
+    for the full matrix and for a landmark allocation."""
+    import pted
+    from pted.utils import distance_histogram
+
+    rng = np.random.default_rng(0)
+    x, y = rng.standard_normal((n1, 3)), rng.standard_normal((n2, 3)) + 0.5
+
+    direct = tmp_path / "direct.png"
+    distance_histogram(x, y, str(direct), permutations=5, bins=12, n_landmarks=m, rng=0)
+    assert direct.exists()
+
+    triggered = tmp_path / "triggered.png"
+    pval = pted.pted(
+        x,
+        y,
+        permutations=20,
+        n_landmarks=m,
+        rng=0,
+        distance_histogram=str(triggered),
+        distance_permutations=5,
+        distance_bins=12,
+    )
+    assert triggered.exists()
+    assert 0.0 < pval <= 1.0
+
+    # asking for the plot must not perturb the test it came from
+    assert pval == pted.pted(x, y, permutations=20, n_landmarks=m, rng=0)
+
+
+def test_distance_histogram_skips_when_the_matrix_is_gone(tmp_path):
+    """The singleton allocation keeps only row sums, so the histogram has
+    nothing to bin and says so rather than failing late or writing junk."""
+    from pted.utils import distance_histogram
+
+    rng = np.random.default_rng(0)
+    out = tmp_path / "singleton.png"
+    with pytest.warns(UserWarning, match="singleton"):
+        distance_histogram(
+            rng.standard_normal((1, 3)),
+            rng.standard_normal((60, 3)),
+            str(out),
+            permutations=2,
+            n_landmarks=12,
+            rng=0,
+        )
+    assert not out.exists()
+
+
+def test_distance_histogram_draws_the_final_bin(tmp_path, monkeypatch):
+    """A `where="post"` step draws from x[i] to x[i+1], so a histogram must
+    carry the right-hand edge and repeat the last height. Without that the
+    final bin spans nothing and is silently dropped from the figure."""
+    import matplotlib.pyplot as plt
+    from pted.utils import distance_histogram
+
+    captured = {}
+    real_subplots = plt.subplots
+
+    def spy(*args, **kwargs):
+        fig, ax = real_subplots(*args, **kwargs)
+        captured["ax"] = ax
+        return fig, ax
+
+    monkeypatch.setattr(plt, "subplots", spy)
+
+    rng = np.random.default_rng(0)
+    bins = 9
+    distance_histogram(
+        rng.standard_normal((40, 2)),
+        rng.standard_normal((50, 2)),
+        str(tmp_path / "bins.png"),
+        permutations=3,
+        bins=bins,
+        rng=0,
+    )
+
+    lines = captured["ax"].lines
+    assert len(lines) == 4, "three components plus the permuted median"
+    for line in lines:
+        xs, ys = line.get_xdata(), line.get_ydata()
+        assert len(xs) == bins + 1, "the right-hand edge must be carried"
+        assert len(ys) == bins + 1
+        assert ys[-1] == ys[-2], "the final height repeats, or the last bin is not drawn"
+        assert np.allclose(np.diff(xs), xs[1] - xs[0]), "edges are uniform"
+
+
+def test_distance_histogram_batches_the_labels(tmp_path, monkeypatch):
+    """Relabellings are drawn in batches summing to `permutations`, so the
+    (rows, n) label block stays bounded however many are asked for."""
+    import pted.utils as U
+
+    drawn = []
+    real_drawer = U._label_drawer
+
+    def spy(prep, rng):
+        draw = real_drawer(prep, rng)
+
+        def wrapped(rows):
+            drawn.append(rows)
+            return draw(rows)
+
+        return wrapped
+
+    monkeypatch.setattr(U, "_label_drawer", spy)
+
+    rng = np.random.default_rng(0)
+    U.distance_histogram(
+        rng.standard_normal((30, 2)),
+        rng.standard_normal((40, 2)),
+        str(tmp_path / "batched.png"),
+        permutations=7,
+        bins=6,
+        batch_size=3,
+        rng=0,
+    )
+    assert drawn == [3, 3, 1], f"expected an uneven 3+3+1 split, got {drawn}"
+
+    drawn.clear()
+    U.distance_histogram(
+        rng.standard_normal((30, 2)),
+        rng.standard_normal((40, 2)),
+        str(tmp_path / "unbatched.png"),
+        permutations=7,
+        bins=6,
+        rng=0,
+    )
+    assert sum(drawn) == 7, "an unset batch_size still draws exactly `permutations` rows"
