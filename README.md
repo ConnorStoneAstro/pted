@@ -121,6 +121,16 @@ line.
 
 ![pted demo test](media/test_PTED.png)
 
+You can produce this centre panel for your own data by passing a filename to
+`pted`: `distance_histogram = "components.pdf"`. It plots the three
+pairwise-distance densities the energy distance is built from, with each one's
+null band from `distance_permutations` relabellings behind it. A significant
+p-value tells you the samples differ; this tells you *how* -- one sample
+tighter than the other, offset from it, or multimodal. The bands are per
+component because the three rest on very different numbers of pairs, so they
+are not equally noisy; they are pointwise and meant for reading shape, not as
+a decision rule.
+
 In the left figure, we show the two distributions, which by eye are clearly not
 drawn from the same distribution (circle and line). In the center figure we show
 the individual distance measurements as histograms. To compute the energy

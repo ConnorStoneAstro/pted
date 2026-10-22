@@ -7,6 +7,7 @@ from .utils import (
     _prepare_test,
     _permutation_distribution,
     _draw_containment_pit,
+    _draw_distance_histogram,
     _as_rng,
     two_tailed_p,
     confidence_alert,
@@ -27,6 +28,9 @@ def pted(
     prog_bar: bool = False,
     batch_size: Optional[int] = None,
     rng=None,
+    distance_histogram: Optional[str] = None,
+    distance_permutations: int = 200,
+    distance_bins: int = 50,
 ) -> Union[float, tuple[float, np.ndarray, float]]:
     """
     Two sample null hypothesis test using a permutation test on the energy
@@ -109,6 +113,15 @@ def pted(
             batch to a few million elements.
         rng: seed, ``np.random.Generator``, or None to draw from the global
             numpy state, so ``np.random.seed`` still controls reproducibility.
+        distance_histogram (Optional[str]): if given, the path to save a
+            diagnostic plot of the three pairwise-distance distributions the
+            energy distance is built from, against a permuted null band. Shows
+            *where* two samples differ, not just that they do. See
+            :func:`pted.utils.distance_histogram`.
+        distance_permutations (int): relabellings behind that plot's null
+            band; 0 omits the band. Each costs a pass over the distance
+            matrix, so this is far smaller than ``permutations``.
+        distance_bins (int): histogram bins for that plot.
 
     Note
     ----
@@ -156,15 +169,15 @@ def pted(
 
     # A landmark count covering the whole pooled sample lands in the exact
     # full-matrix regime, so there is no separate branch for it here.
-    test, permute = _energy_test(
-        x,
-        y,
-        permutations=permutations,
-        n_landmarks=n_landmarks,
-        prog_bar=prog_bar,
-        batch_size=batch_size,
-        rng=rng,
-    )
+    # Prepared once and used twice, so the diagnostic shows the same landmarks
+    # and the same distance matrix the statistic was computed from.
+    prep, alloc, rng = _prepare_test(x, y, n_landmarks, rng, containment=False)
+    test, permute = _permutation_distribution(prep, alloc, permutations, prog_bar, batch_size, rng)
+
+    if distance_histogram is not None:
+        _draw_distance_histogram(
+            prep, alloc, len(x), distance_histogram, distance_permutations, distance_bins, rng
+        )
 
     # Compute p-value. The null set is `permutations` random draws, or the
     # whole permutation subgroup when that is smaller, so count what came back

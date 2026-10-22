@@ -102,6 +102,7 @@ __all__ = (
     "simulation_based_calibration_histogram",
     "pit_plot",
     "containment_pit_plot",
+    "distance_histogram",
     "hdp_coverage_test",
 )
 
@@ -1455,6 +1456,178 @@ def _draw_containment_pit(prep: dict, saveto, confidence: float, threshold: floa
     ax.legend(loc="upper left")
     fig.savefig(saveto, bbox_inches="tight")
     plt.close(fig)
+
+
+def _component_bin_counts(bidx, bins, columns, u, rows_per_chunk):
+    """Bin counts of the three energy-distance components for one labelling.
+
+    ``u`` is the 0/1 x-membership of every pooled point and ``u[columns]`` is
+    the same membership for the matrix columns, so every entry of the matrix
+    falls into one of four classes. Encoding the class into the bin index lets
+    a single ``bincount`` pass count all four at once, which is far cheaper
+    than taking four boolean-mask copies of the matrix per permutation.
+    """
+    v = u[columns]
+    stride = bins + 1  # the extra slot swallows the self-pairs
+    counts = np.zeros(4 * stride, dtype=np.int64)
+    for start in range(0, len(u), rows_per_chunk):
+        rows = slice(start, start + rows_per_chunk)
+        cls = u[rows, None] + 2 * v[None, :]
+        counts += np.bincount((bidx[rows] + stride * cls).ravel(), minlength=4 * stride)
+    counts = counts.reshape(4, stride)[:, :bins]
+    #      class 3 = x row and x column,  0 = y row and y column,  1 | 2 = cross
+    return counts[3], counts[0], counts[1] + counts[2]
+
+
+def _as_density(counts, width):
+    """Normalise bin counts to a density, so unequal sample sizes compare."""
+    total = counts.sum()
+    return counts / (total * width) if total else np.zeros(len(counts))
+
+
+def _draw_distance_histogram(prep, alloc, n1, saveto, permutations, bins, rng):
+    """Draw the distance histogram from an already-prepared statistic."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        warn("No distance histogram generated! Please install matplotlib.")
+        return
+    if "D" not in prep:
+        # The singleton preparer keeps only the row sums, and rightly so: a
+        # one-point sample has no within-group distances to show anyway.
+        warn(
+            "No distance histogram generated! The 'singleton' landmark allocation "
+            "reduces the distance matrix to its row sums, and a one-point sample "
+            "has no within-group pairs to histogram."
+        )
+        return
+
+    backend = prep["backend"]
+    # The preparer centred the matrix and zeroed the self-pairs. Undo the
+    # centring to recover the distances themselves; the self-pairs are then
+    # dropped rather than restored, exactly as the statistic drops them.
+    D = _to_numpy(prep["D"], backend) + prep["offset"]
+    n, m = D.shape
+    columns = np.arange(n) if alloc["regime"] == "full" else alloc["landmarks"]
+
+    low, high = float(D.min()), float(D.max())
+    if not high > low:  # every pair at the same distance
+        high = low + 1.0
+    edges = np.linspace(low, high, bins + 1)
+    width = edges[1] - edges[0]
+
+    # One pass holds a (rows, m) temporary, so chunk the rows to bound it.
+    rows_per_chunk = max(1, _BATCH_BYTES // (16 * max(m, 1)))
+    bidx = np.empty((n, m), dtype=np.int32)
+    for start in range(0, n, rows_per_chunk):
+        rows = slice(start, start + rows_per_chunk)
+        bidx[rows] = np.digitize(D[rows], edges[1:-1])
+    bidx[columns, np.arange(m)] = bins  # self-pairs land in the discarded slot
+    del D
+
+    observed = (np.arange(n) < n1).astype(np.int32)
+    seen = np.array(
+        [
+            _as_density(c, width)
+            for c in _component_bin_counts(bidx, bins, columns, observed, rows_per_chunk)
+        ]
+    )
+
+    # Under the null all three components estimate the same density, so they
+    # share one median curve -- but NOT one band. They rest on n1 * (n1 - 1),
+    # n2 * (n2 - 1) and 2 * n1 * n2 pairs respectively, so a relabelling moves
+    # them by quite different amounts and each needs its own spread. Pooling
+    # the three into a single band leaves the smallest group's curve escaping
+    # a 16-84 band far more than 32% of the time and the cross term far less.
+    null = None
+    if permutations > 0:
+        U = _to_numpy(_label_drawer(prep, rng)(permutations), backend).astype(np.int32)
+        if n1 > n - n1:  # the drawer marks the smaller group, which here is y
+            U = 1 - U
+        null = np.array(
+            [
+                [
+                    _as_density(c, width)
+                    for c in _component_bin_counts(bidx, bins, columns, labels, rows_per_chunk)
+                ]
+                for labels in U
+            ]
+        )  # (permutations, component, bin)
+
+    left = edges[:-1]
+    colours = ("b", "r", "purple")
+    labels = ("x to x", "y to y", "x to y")
+    fig, ax = plt.subplots()
+    if null is not None:
+        for k, colour in enumerate(colours):
+            low_k, high_k = np.percentile(null[:, k], [16, 84], axis=0)
+            ax.fill_between(left, low_k, high_k, step="post", color=colour, alpha=0.2, zorder=1)
+        ax.fill_between([], [], [], color="0.6", label="permuted 16-84%")  # one legend entry
+        ax.step(
+            left, np.median(null.reshape(-1, bins), 0), where="post",
+            color="k", linewidth=1.4, zorder=2, label="permuted median",
+        )  # fmt: skip
+    for k, (colour, label) in enumerate(zip(colours, labels)):
+        ax.step(left, seen[k], where="post", color=colour, linewidth=2.5, zorder=3 + k, label=label)
+    ax.set_xlabel("Distance [sample pairs]")
+    ax.set_ylabel("density")
+    ax.set_title("Energy distance components")
+    ax.legend()
+    fig.savefig(saveto, bbox_inches="tight")
+    plt.close(fig)
+
+
+def distance_histogram(
+    x,
+    y,
+    saveto,
+    permutations: int = 200,
+    bins: int = 50,
+    n_landmarks: Optional[int] = None,
+    rng=None,
+):
+    """Diagnostic plot for :func:`pted.pted`: *where* the two samples differ.
+
+    The energy distance is built from three mean pairwise distances -- within
+    x, within y, and across the two. This plots the whole distribution behind
+    each of those means rather than the mean alone, so a significant p-value
+    can be read as a shape: x more tightly clustered than y, the two centred
+    in different places, one of them bimodal. The histograms are densities, so
+    the three stay comparable when the samples are different sizes.
+
+    Behind them is the null: the same three components recomputed over
+    ``permutations`` relabellings, drawn from the same subgroup the test
+    itself uses. Under the null all three estimate one common density, which
+    is the black median line, so any separation between the coloured curves is
+    the signal the energy distance is responding to.
+
+    Each component gets its own shaded band, in its own colour, because they
+    rest on very different numbers of pairs -- ``n1 * (n1 - 1)``,
+    ``n2 * (n2 - 1)`` and ``2 * n1 * n2``. A relabelling therefore moves them
+    by different amounts, and one shared band would be far too tight for the
+    smaller sample and far too loose for the cross term. Where the samples are
+    the same size the three bands nearly coincide and read as one.
+
+    The bands are pointwise, not simultaneous: roughly a third of the bins of
+    a perfectly null curve stray outside, and neighbouring bins stray together
+    because the curve is smooth. Read it for shape, not as a decision rule --
+    the p-value is the test.
+
+    Parameters
+    ----------
+        x, y: the samples, as passed to :func:`pted.pted`. Shape ``(n1, d)``,
+            ``(n2, d)``.
+        saveto (str): file path; the format follows the extension.
+        permutations (int): relabellings behind the null band; 0 omits it.
+            Each one costs a pass over the distance matrix, so this is
+            typically far smaller than the test's own permutation count.
+        bins (int): histogram bins, shared by all three components.
+        n_landmarks: as for :func:`pted.pted`. With landmarks the histogram
+            covers the pairs the statistic actually used, not every pair.
+        rng: seed, ``np.random.Generator``, or None.
+    """
+    prep, alloc, rng = _prepare_test(x, y, n_landmarks, rng, containment=False)
+    _draw_distance_histogram(prep, alloc, len(x), saveto, permutations, bins, rng)
 
 
 def hdp_coverage_test(
